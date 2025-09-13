@@ -78,8 +78,8 @@ class HoopDetectorNode(Node):
         self.declare_parameter('red_s_min', 80)
         self.declare_parameter('red_v_min', 60)
         
-        self.declare_parameter('white_s_max', 0) # 하양
-        self.declare_parameter('white_v_min', 255)
+        self.declare_parameter('white_s_max', 70) # 하양
+        self.declare_parameter('white_v_min', 190)
 
         self.declare_parameter('band_top_ratio', 0.15)   # 백보드 h x 0.15
         self.declare_parameter('band_side_ratio', 0.10)   # w x 0.10
@@ -109,8 +109,6 @@ class HoopDetectorNode(Node):
         self.add_on_set_parameters_callback(self.param_callback)
 
         self.hsv = np.empty((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start, 3), dtype=np.uint8)
-        self.red_mask = np.empty((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)       # 빨강 마스크 (재사용)
-        self.tmp_mask = np.empty((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)       # 임시 마스크 (재사용)
 
         # 클릭
         cv2.namedWindow('Hoop Detection')
@@ -194,10 +192,6 @@ class HoopDetectorNode(Node):
             H, S, V = [int(v) for v in self.hsv[y - self.roi_y_start, x - self.roi_x_start]]
             self.get_logger().info(f"[Pos] x={x-self.zandi_x}, y={-(y-self.zandi_y)} | HSV=({H},{S},{V})")
 
-    def rect_sum(self, ii, x, y, w, h): # 사각형 적분값
-        x2, y2 = x + w, y + h
-        return int(ii[y2, x2] - ii[y, x2] - ii[y2, x] + ii[y, x])
-
     def image_callback(self, color_msg: Image, depth_msg: Image):
         start_time = time.time()
 
@@ -209,25 +203,27 @@ class HoopDetectorNode(Node):
         
         t1 = time.time()
         
-        cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV, dst=self.hsv)
+        self.hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
 
         t2 = time.time()
 
         # 빨강 마스킹
-        cv2.inRange(self.hsv, (self.red_h1_low, self.red_s_min, self.red_v_min), (self.red_h1_high, 255, 255), dst=self.red_mask)
-        cv2.inRange(self.hsv, (self.red_h2_low, self.red_s_min, self.red_v_min), (self.red_h2_high, 255, 255), dst=self.tmp_mask)
-        cv2.bitwise_or(self.red_mask, self.tmp_mask, dst=self.red_mask)
+        red_mask1 = cv2.inRange(self.hsv, (self.red_h1_low, self.red_s_min, self.red_v_min), (self.red_h1_high, 255, 255))
+        red_mask2 = cv2.inRange(self.hsv, (self.red_h2_low, self.red_s_min, self.red_v_min), (self.red_h2_high, 255, 255))
+        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+        red_mask[roi_depth >= self.depth_max] = 0  
+        red_mask[roi_depth <= self.depth_min] = 0 
         
         t3 = time.time()
 
         # 모폴로지
-        cv2.morphologyEx(self.red_mask, cv2.MORPH_OPEN,  self.kernel, dst=self.red_mask)
-        cv2.morphologyEx(self.red_mask, cv2.MORPH_CLOSE, self.kernel, dst=self.red_mask)
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN,  self.kernel)
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, self.kernel)
 
         t4 = time.time()
 
         # 컨투어
-        contours, _ = cv2.findContours(self.red_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(red_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) # 출력용 카피
 
         best_cnt = best_cx = best_cy = best_w = best_h = best_depth = best_box = None
         best_score = 0.5  # 빨강 비율 최소치
@@ -238,13 +234,12 @@ class HoopDetectorNode(Node):
             area = cv2.contourArea(cnt)
             if area > self.backboard_area: # 1. 일정 넓이 이상
                 rect = cv2.minAreaRect(cnt)  # ((cx,cy),(W,H),angle in [-90,0))
-                (cx, cy), (W, H), angle = rect
-                if W < 1 or H < 1: continue
-                if W < H:
-                    W, H = H, W
+                (cx, cy), (width, height), angle = rect
+                if width < height:
+                    width, height = height, width
                     angle += 90.0
 
-                box = cv2.boxPoints(((cx, cy), (W, H), angle)).astype(np.float32)
+                box = cv2.boxPoints(((cx, cy), (width, height), angle)).astype(np.float32)
 
                 def order_box(pts):
                     s = pts.sum(axis=1)
@@ -256,29 +251,29 @@ class HoopDetectorNode(Node):
                     return np.array([tl, tr, br, bl], dtype=np.float32)
 
                 src = order_box(box)
-                W_i, H_i = int(round(W)), int(round(H))
-                if W_i <= 0 or H_i <= 0: continue
-                dst = np.array([[0,0],[W_i,0],[W_i,H_i],[0,H_i]], dtype=np.float32)
+                width_i, height_i = int(round(width)), int(round(height))
+                if width_i <= 0 or height_i <= 0: continue
+                dst = np.array([[0,0],[width_i,0],[width_i,height_i],[0,height_i]], dtype=np.float32)
 
                 # 원근변환 (HSV/Depth 동일 M)
                 M = cv2.getPerspectiveTransform(src, dst)
-                hsv_warp = cv2.warpPerspective(self.hsv, M, (W_i, H_i), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-                depth_warp = cv2.warpPerspective(roi_depth, M, (W_i, H_i), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
+                hsv_warp = cv2.warpPerspective(self.hsv, M, (width_i, height_i), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+                depth_warp = cv2.warpPerspective(roi_depth, M, (width_i, height_i), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REPLICATE)
 
                 # 빨강 마스킹 (warp 공간)
-                red1 = cv2.inRange(hsv_warp, (self.red_h1_low, self.red_s_min, self.red_v_min), (self.red_h1_high, 255, 255))
-                red2 = cv2.inRange(hsv_warp, (self.red_h2_low, self.red_s_min, self.red_v_min), (self.red_h2_high, 255, 255))
-                red_warp = cv2.bitwise_or(red1, red2)
-                cv2.morphologyEx(red_warp, cv2.MORPH_OPEN,  self.kernel, dst=red_warp)
-                cv2.morphologyEx(red_warp, cv2.MORPH_CLOSE, self.kernel, dst=red_warp)
+                # red1 = cv2.inRange(hsv_warp, (self.red_h1_low, self.red_s_min, self.red_v_min), (self.red_h1_high, 255, 255))
+                # red2 = cv2.inRange(hsv_warp, (self.red_h2_low, self.red_s_min, self.red_v_min), (self.red_h2_high, 255, 255))
+                # red_warp = cv2.bitwise_or(red1, red2)
+                # cv2.morphologyEx(red_warp, cv2.MORPH_OPEN,  self.kernel, dst=red_warp)
+                # cv2.morphologyEx(red_warp, cv2.MORPH_CLOSE, self.kernel, dst=red_warp)
 
                 # 밴드 두께
-                t = int(round(H_i * self.band_top_ratio))
-                s = int(round(W_i * self.band_side_ratio))
-                if t <= 0 or s <= 0 or W_i <= 2*s or H_i <= t: continue
+                t = int(round(height_i * self.band_top_ratio))
+                s = int(round(width_i * self.band_side_ratio))
+                if t <= 0 or s <= 0 or width_i <= 2*s or height_i <= t: continue
 
                 # 밴드 빨강 비율 (뒤집은 U: top+left+right - 겹침2개)
-                area_band = float(t*W_i + s*H_i + s*H_i - 2*s*t)
+                area_band = float(t*width_i + s*height_i + s*height_i - 2*s*t)
                 if area_band <= 0.0: continue
 
                 red01_warp = (red_warp != 0).astype(np.uint8)
@@ -288,57 +283,40 @@ class HoopDetectorNode(Node):
                     x2, y2 = x + w, y + h
                     return int(ii[y2, x2] - ii[y, x2] - ii[y2, x] + ii[y, x])
 
-                red_top   = isum(ii, 0, 0, W_i, t)
-                red_left  = isum(ii, 0, 0, s, H_i)
-                red_right = isum(ii, W_i - s, 0, s, H_i)
+                red_top   = isum(ii, 0, 0, width_i, t)
+                red_left  = isum(ii, 0, 0, s, height_i)
+                red_right = isum(ii, width_i - s, 0, s, height_i)
                 red_tl    = isum(ii, 0, 0, s, t)
-                red_tr    = isum(ii, W_i - s, 0, s, t)
+                red_tr    = isum(ii, width_i - s, 0, s, t)
                 red_U = float(red_top + red_left + red_right - red_tl - red_tr)
                 ratio_band = red_U / area_band
 
                 if (ratio_band >= self.red_ratio_min): # 2. 일정 빨강 이상
                     # 내부(하양)
-                    inner_y1, inner_y2 = t, H_i
-                    inner_x1, inner_x2 = s, W_i - s
+                    inner_y1, inner_y2 = t, height_i
+                    inner_x1, inner_x2 = s, width_i - s
                     if inner_y2 <= inner_y1 or inner_x2 <= inner_x1: continue
-                    inner_depth = depth_warp[inner_y1:inner_y2, inner_x1:inner_x2]
-                    valid = (np.isfinite(inner_depth)) & (inner_depth > self.depth_min) & (inner_depth < self.depth_max)
-                    valid_pixels = inner_depth[valid]
-                    if valid_pixels.size > 30: # 4. 거리 조건 만족한 픽셀 수
-                        depth_med = float(np.median(valid_pixels)) * self.depth_scale # 깊이
+                    inner_hsv = hsv_warp[inner_y1:inner_y2, inner_x1:inner_x2]
+                    inner_white = cv2.inRange(inner_hsv, (0, 0, self.white_v_min), (180, self.white_s_max, 255))  ## 여기서 하양 영역 출력
+                    area_inner = inner_white.size
+                    if area_inner <= 0: continue
+                    ratio_inner = float(cv2.countNonZero(inner_white)) / float(area_inner)
 
-                        if best_score < ratio_band: # 최종
-                            best_score = ratio_band
-                            best_cnt = cnt
-                            best_cx, best_cy = int(round(cx + self.roi_x_start)), int(round(cy + self.roi_y_start))
-                            best_w, best_h = W_i, H_i
-                            best_depth = depth_med
-                            best_box = (box + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
-                    # inner_y1, inner_y2 = t, H_i
-                    # inner_x1, inner_x2 = s, W_i - s
-                    # if inner_y2 <= inner_y1 or inner_x2 <= inner_x1: continue
-                    # inner_hsv = hsv_warp[inner_y1:inner_y2, inner_x1:inner_x2]
-                    # inner_white = cv2.inRange(inner_hsv, (0, 0, self.white_v_min), (180, self.white_s_max, 255))
-                    # area_inner = inner_white.size
-                    # if area_inner <= 0: continue
-                    # ratio_inner = float(cv2.countNonZero(inner_white)) / float(area_inner)
-                    
+                    if ratio_inner > self.white_min_inner: # 3. 일정 하양 이상
+                        # 깊이(m)
+                        inner_depth = depth_warp[inner_y1:inner_y2, inner_x1:inner_x2]
+                        valid = (np.isfinite(inner_depth)) & (inner_depth > self.depth_min) & (inner_depth < self.depth_max)
+                        valid_pixels = inner_depth[valid]
+                        if valid_pixels.size > 30: # 4. 거리 조건 만족한 픽셀 수
+                            depth_med = float(np.median(valid_pixels)) * self.depth_scale # 깊이
 
-                    # if ratio_inner > self.white_min_inner: # 3. 일정 하양 이상
-                    #     # 깊이(m)
-                    #     inner_depth = depth_warp[inner_y1:inner_y2, inner_x1:inner_x2]
-                    #     valid = (np.isfinite(inner_depth)) & (inner_depth > self.depth_min) & (inner_depth < self.depth_max)
-                    #     valid_pixels = inner_depth[valid]
-                    #     if valid_pixels.size > 30: # 4. 거리 조건 만족한 픽셀 수
-                    #         depth_med = float(np.median(valid_pixels)) * self.depth_scale # 깊이
-
-                    #         if best_score < ratio_band: # 최종
-                    #             best_score = ratio_band
-                    #             best_cnt = cnt
-                    #             best_cx, best_cy = int(round(cx + self.roi_x_start)), int(round(cy + self.roi_y_start))
-                    #             best_w, best_h = W_i, H_i
-                    #             best_depth = depth_med
-                    #             best_box = (box + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
+                            if best_score < ratio_band: # 최종
+                                best_score = ratio_band
+                                best_cnt = cnt
+                                best_cx, best_cy = int(round(cx + self.roi_x_start)), int(round(cy + self.roi_y_start))
+                                best_w, best_h = width_i, height_i
+                                best_depth = depth_med
+                                best_box = (box + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
 
 
         t5 = time.time()
@@ -437,7 +415,7 @@ class HoopDetectorNode(Node):
         #                        f"Mophology = {(t4 - t3)*1000:.3f}, "
         #                        f"Contour = {(t5 - t4)*1000:.3f}, Decision = {(t6 - t5)*1000:.3f}, Show = {(now - t6)*1000:.3f}")
 
-        cv2.imshow('Red Mask', self.red_mask)
+        cv2.imshow('Red Mask', red_mask)
         cv2.imshow('Hoop Detection', frame)
         cv2.waitKey(1)
 
