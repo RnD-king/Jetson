@@ -8,7 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from collections import Counter
-from my_cv_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
+from robot_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
 from message_filters import Subscriber, ApproximateTimeSynchronizer # type: ignore  동기화용
 from rcl_interfaces.msg import SetParametersResult
 
