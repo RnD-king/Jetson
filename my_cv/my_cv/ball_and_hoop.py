@@ -8,7 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from collections import Counter
-from robot_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
+from my_cv_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
 from message_filters import Subscriber, ApproximateTimeSynchronizer # type: ignore  동기화용
 from rcl_interfaces.msg import SetParametersResult
 
@@ -138,17 +138,6 @@ class LineListenerNode(Node): ##################################################
         self.declare_parameter("orange_v_low", 120)  
         self.declare_parameter("orange_v_high", 255)
 
-        # 파라미터 적용 B
-        self.cam_mode = self.get_parameter("cam_mode").value
-        self.cam1_mode = self.get_parameter("cam1_mode").value
-
-        self.orange_h_low = self.get_parameter("orange_h_low").value
-        self.orange_h_high = self.get_parameter("orange_h_high").value
-        self.orange_s_low = self.get_parameter("orange_s_low").value
-        self.orange_s_high = self.get_parameter("orange_s_high").value
-        self.orange_v_low = self.get_parameter("orange_v_low").value
-        self.orange_v_high = self.get_parameter("orange_v_high").value
-
         # 파라미터 선언 H
         self.declare_parameter('red_h1_low', 0) # 빨강
         self.declare_parameter('red_h1_high', 10)
@@ -166,6 +155,17 @@ class LineListenerNode(Node): ##################################################
         self.declare_parameter('red_ratio_min', 0.55)     # 백보드 영역
         self.declare_parameter('white_min_inner', 0.50)  
         self.declare_parameter('backboard_area', 1500)
+
+        # 파라미터 적용 B
+        self.cam_mode = self.get_parameter("cam_mode").value
+        self.cam1_mode = self.get_parameter("cam1_mode").value
+
+        self.orange_h_low = self.get_parameter("orange_h_low").value
+        self.orange_h_high = self.get_parameter("orange_h_high").value
+        self.orange_s_low = self.get_parameter("orange_s_low").value
+        self.orange_s_high = self.get_parameter("orange_s_high").value
+        self.orange_v_low = self.get_parameter("orange_v_low").value
+        self.orange_v_high = self.get_parameter("orange_v_high").value
 
         # 파라미터 적용 H
         self.red_h1_low = self.get_parameter('red_h1_low').value
@@ -193,11 +193,15 @@ class LineListenerNode(Node): ##################################################
 
         # 클릭
         cv2.namedWindow('Detection', cv2.WINDOW_NORMAL)
+        cv2.namedWindow('Ball Detection', cv2.WINDOW_NORMAL)
         cv2.setMouseCallback('Detection', self.on_click)
+        cv2.setMouseCallback('Ball Detection', self.on_click)
 
     def param_callback(self, params):
         for p in params:
-            if p.name == "orange_h_low":   self.orange_h_low = int(p.value)
+            if p.name == "cam_mode":   self.cam_mode = int(p.value)
+            elif p.name == "cam1_mode": self.cam1_mode = int(p.value)
+            elif p.name == "orange_h_low":   self.orange_h_low = int(p.value)
             elif p.name == "orange_h_high": self.orange_h_high = int(p.value)
             elif p.name == "orange_s_low":  self.orange_s_low = int(p.value)
             elif p.name == "orange_s_high": self.orange_s_high = int(p.value)
@@ -241,7 +245,7 @@ class LineListenerNode(Node): ##################################################
         self.get_logger().info(f"[Pos] x={x - self.zandi_x}, y={-(y - self.zandi_y)} | HSV=({H},{S},{V})")
 
     def motion_callback(self, msg: MotionEnd): # 모션 끝 같이 받아오기 (중복 방지)
-        if bool(msg.motion_end_detect):
+        if bool(msg.end):
             self.armed = True
             self.get_logger().info("Subscribed /motion_end !!!!!!!!!!!!!!!!!!!!!!!!")
 
@@ -1101,7 +1105,7 @@ class LineListenerNode(Node): ##################################################
         if self.collecting:
             cv2.imshow('Basketball Mask', mask) # 기준 거리 이내, 주황색
         
-        cv2.imshow('Basketball Detection', frame)
+        cv2.imshow('Ball Detection', frame)
         cv2.waitKey(1)
 
 def main():
