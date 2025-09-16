@@ -241,7 +241,7 @@ class LineListenerNode(Node): ##################################################
         self.get_logger().info(f"[Pos] x={x - self.zandi_x}, y={-(y - self.zandi_y)} | HSV=({H},{S},{V})")
 
     def motion_callback(self, msg: MotionEnd): # 모션 끝 같이 받아오기 (중복 방지)
-        if bool(msg.end):
+        if bool(msg.motion_end_detect):
             self.armed = True
             self.get_logger().info("Subscribed /motion_end !!!!!!!!!!!!!!!!!!!!!!!!")
 
