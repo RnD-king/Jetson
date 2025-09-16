@@ -15,10 +15,6 @@ def declare_configurable_parameters(parameters):
     return [DeclareLaunchArgument(p['name'], default_value=p['default'], description=p['description']) for p in parameters]
     
 def set_configurable_parameters_unsuffixed(parameters, suffix):
-    """
-    런치 인자는 suffix 붙은 이름(예: camera_name1)으로 받고,
-    노드에 넘길 params dict는 suffix를 뗀 원래 키(예: camera_name)로 만든다.
-    """
     m = {}
     for p in parameters:
         suffixed = p['name']                  # 예: 'camera_name1'
@@ -37,30 +33,42 @@ def launch_setup(context, params, param_name_suffix=''):
     _config_file = LaunchConfiguration('config_file' + param_name_suffix).perform(context)
     params_from_file = {} if _config_file == "''" else yaml_to_dict(_config_file)
 
-    lifecycle_param_file = os.path.join(os.path.dirname(__file__), '..', 'config', 'global_settings.yaml')
-    lifecycle_params = yaml_to_dict(lifecycle_param_file)
-    use_lifecycle_node = lifecycle_params.get("use_lifecycle_node", False)
+    # lifecycle_param_file = os.path.join(os.path.dirname(__file__), '..', 'config', 'global_settings.yaml')
+    # lifecycle_params = yaml_to_dict(lifecycle_param_file)
+    # use_lifecycle_node = lifecycle_params.get("use_lifecycle_node", False)
 
     _output = LaunchConfiguration('output' + param_name_suffix)
-    node_action = launch_ros.actions.LifecycleNode if use_lifecycle_node else launch_ros.actions.Node
-    log_message = "Launching as LifecycleNode" if use_lifecycle_node else "Launching as Normal ROS Node"
+    # node_action = launch_ros.actions.LifecycleNode if use_lifecycle_node else launch_ros.actions.Node
+    # log_message = "Launching as LifecycleNode" if use_lifecycle_node else "Launching as Normal ROS Node"
 
     if (os.getenv('ROS_DISTRO') == 'foxy'):
         _output = context.perform_substitution(_output)
 
     return [
-        LogInfo(msg=f"🚀 {log_message} (cam{param_name_suffix})"),
-        node_action(
+        launch_ros.actions.Node(
             package='realsense2_camera',
             namespace=LaunchConfiguration('camera_namespace' + param_name_suffix),
             name=LaunchConfiguration('camera_name' + param_name_suffix),
             executable='realsense2_camera_node',
-            parameters=[params, params_from_file],
+            parameters=[params, params_from_file], 
             output=_output,
             arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level' + param_name_suffix)],
             emulate_tty=True,
         )
     ]
+    # return [
+    #     LogInfo(msg=f"🚀 {log_message} (cam{param_name_suffix})"),
+    #     node_action(
+    #         package='realsense2_camera',
+    #         namespace=LaunchConfiguration('camera_namespace' + param_name_suffix),
+    #         name=LaunchConfiguration('camera_name' + param_name_suffix),
+    #         executable='realsense2_camera_node',
+    #         parameters=[params, params_from_file],
+    #         output=_output,
+    #         arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level' + param_name_suffix)],
+    #         emulate_tty=True,
+    #     )
+    # ]
 
 # ==== 여기부터: 두 대용 정의 ====
 
@@ -116,16 +124,16 @@ def generate_launch_description():
     cam1_overrides = {
         'camera_name': 'cam1',
         'camera_namespace': '',
-        'serial_no': '"148522071908"',      # 시리얼 넘버    
+        'serial_no': '"148522071908"',      # 시리얼 넘버     148522071908
         'enable_color': 'true',
         'enable_depth': 'true',
         'align_depth.enable': 'true',
         'rgb_camera.power_line_frequency': '2',
         'rgb_camera.color_profile': '640,480,15',
         'depth_module.depth_profile': '640,480,15',
-        # 필요시 infra/imu 추가로 off
-        #'enable_infra': 'false', 'enable_infra1': 'false', 'enable_infra2': 'false',
-        #'enable_gyro': 'false', 'enable_accel': 'false', 'enable_motion':'false',
+        # infra/imu 추가로 off
+        'enable_infra': 'false', 'enable_infra1': 'false', 'enable_infra2': 'false',
+        'enable_gyro': 'false', 'enable_accel': 'false', 'enable_motion':'false',
     }
     params_cam1 = suffixed_params(BASE_PARAMS, '1', cam1_overrides)
 
@@ -133,7 +141,7 @@ def generate_launch_description():
     cam2_overrides = {
         'camera_name': 'cam2',
         'camera_namespace': '',
-        'serial_no': '"332522071721"',     # 시리얼 넘버
+        'serial_no': '"332522071721"',     # 시리얼 넘버 332522071721
         'enable_color': 'true',
         'enable_depth': 'false',
         'align_depth.enable': 'false',
@@ -159,4 +167,3 @@ def generate_launch_description():
                                    'param_name_suffix': '2'})]
 
     return LaunchDescription(decl + actions)
-
