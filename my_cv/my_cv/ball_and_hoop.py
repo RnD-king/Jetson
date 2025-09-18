@@ -8,7 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from collections import Counter
-from robot_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
+from my_cv_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
 from message_filters import Subscriber, ApproximateTimeSynchronizer # type: ignore  동기화용
 from rcl_interfaces.msg import SetParametersResult
 
@@ -17,26 +17,24 @@ BALL, HOOP = 1, 2
 
 camera_width = 640
 camera_height = 480
-pick_rad = 20
+
+roi_x_start = int(camera_width * 0 // 5)
+roi_x_end = int(camera_width * 5 // 5)
+roi_y_start = int(camera_height * 1 // 12)
+roi_y_end = int(camera_height * 11 // 12)
 
 class LineListenerNode(Node): #################################################################### 판단 프레임 수 바꿀 때 yolo_cpp 도 고려해라~~~
     def __init__(self):
         super().__init__('line_subscriber')
-        
-        # 공용 변수
-
-        self.roi_x_start = int(camera_width * 0 // 5)  # 초록 박스 관심 구역
-        self.roi_x_end = int(camera_width * 5 // 5)
-        self.roi_y_start = int(camera_height * 1 // 12)
-        self.roi_y_end = int(camera_height * 11 // 12)
 
         # zandi
-        self.zandi_x = int((self.roi_x_start + self.roi_x_end) / 2)
+        self.zandi_x = int((roi_x_start + roi_x_end) / 2)
         self.zandi_y = int(camera_height - 100)
 
         # pick
         self.pick_x = self.zandi_x - 100
         self.pick_y = self.zandi_y - 100
+        self.pick_rad = 20
 
         # 타이머
         self.frame_count = 0
@@ -48,16 +46,14 @@ class LineListenerNode(Node): ##################################################
         self.backboard_score_text = 'Miss' # H
 
         # 추적
-        self.last_cx_ball = None
-        self.last_cy_ball = None
-        self.last_z_ball = 0
-        self.last_radius = None
+        self.last_cx_ball = self.last_cy_ball = self.last_z_ball = self.last_radius = None
+        self.last_agv_cy_ball = 0 # 화면 전환용
         self.ball_lost = 0 # B
 
-        self.hoop_lost = 0 # H
         self.last_score = self.last_top_score = self.last_left_score = self.last_right_score = None
         self.last_cx_hoop = self.last_cy_hoop = self.last_z_hoop = self.last_yaw = None
-        self.last_band_mask = self.last_box_hoop = None
+        self.last_box_hoop = None
+        self.hoop_lost = 0 # H
 
         # 변수
         self.draw_color = (0, 255, 0)
@@ -68,7 +64,7 @@ class LineListenerNode(Node): ##################################################
         self.fx, self.fy = 607.0, 606.0   # ros2 topic echo /camera/color/camera_info - 카메라 고유값
         self.cx_intr, self.cy_intr = 325.5, 239.4
 
-        self.last_band_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype = np.uint8)
+        self.last_band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype = np.uint8)
 
         self.lower_hsv_ball = np.array([8, 60, 60])
         self.upper_hsv_ball = np.array([60, 255, 255]) # 주황색 기준으로
@@ -89,12 +85,7 @@ class LineListenerNode(Node): ##################################################
 
         self.cam1_ball_count = 0
         self.cam2_miss_count = 0
-
         self.hoop_count = 0
-
-        self.last_angle_ball = 0 
-        self.last_agv_cx_ball = 0  
-        self.last_agv_cy_ball = 0
         
         self.ball_valid_list = []
         self.ball_cx_list = []
@@ -230,22 +221,22 @@ class LineListenerNode(Node): ##################################################
     def on_click(self, event, x, y, flags, _):
         if event != cv2.EVENT_LBUTTONDOWN or self.hsv is None:
             return
-        if not (self.roi_x_start <= x <= self.roi_x_end and self.roi_y_start <= y <= self.roi_y_end):
+        if not (roi_x_start <= x <= roi_x_end and roi_y_start <= y <= roi_y_end):
             return
 
-        rx = x - self.roi_x_start
-        ry = y - self.roi_y_start
+        rx = x - roi_x_start
+        ry = y - roi_y_start
         k = 1  # (3,3)
 
-        y0, y1 = max(0, ry - k), min(self.roi_y_end - self.roi_y_start, ry + k + 1)
-        x0, x1 = max(0, rx - k), min(self.roi_x_end - self.roi_x_start, rx + k +1)
+        y0, y1 = max(0, ry - k), min(roi_y_end - roi_y_start, ry + k + 1)
+        x0, x1 = max(0, rx - k), min(roi_x_end - roi_x_start, rx + k +1)
         patch = self.hsv[y0:y1, x0:x1].reshape(-1,3)
 
         H, S, V = np.mean(patch, axis=0).astype(int)
         self.get_logger().info(f"[Pos] x={x - self.zandi_x}, y={-(y - self.zandi_y)} | HSV=({H},{S},{V})")
 
     def motion_callback(self, msg: MotionEnd): # 모션 끝 같이 받아오기 (중복 방지)
-        if bool(msg.motion_end_detect):
+        if bool(msg.end):
             self.armed = True
             self.get_logger().info("Subscribed /motion_end !!!!!!!!!!!!!!!!!!!!!!!!")
 
@@ -259,8 +250,8 @@ class LineListenerNode(Node): ##################################################
         frame = self.bridge.imgmsg_to_cv2(cam1_color_msg, desired_encoding='bgr8')
         depth = self.bridge.imgmsg_to_cv2(cam1_depth_msg, desired_encoding='passthrough').astype(np.float32)
 
-        roi_color = frame[self.roi_y_start:self.roi_y_end, self.roi_x_start:self.roi_x_end]
-        roi_depth = depth[self.roi_y_start:self.roi_y_end, self.roi_x_start:self.roi_x_end]
+        roi_color = frame[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+        roi_depth = depth[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
 
         if self.cam1_mode == BALL: ##################################################################################################3
             if not self.collecting:
@@ -278,9 +269,7 @@ class LineListenerNode(Node): ##################################################
                     self.frame_idx = 0
 
                     self.last_cx_ball = self.last_cy_ball = self.last_radius = self.last_z_ball = None
-
                     self.ball_lost = 0
-
                     self.cam2_miss_count = 0
 
                     self.line_start_time = time.time()
@@ -318,8 +307,8 @@ class LineListenerNode(Node): ##################################################
                         if ratio < best_ratio_ball:
                             best_cnt_ball = cnt
                             best_ratio_ball = ratio
-                            best_cx_ball = int(x + self.roi_x_start) 
-                            best_cy_ball = int(y + self.roi_y_start)
+                            best_cx_ball = int(x + roi_x_start) 
+                            best_cy_ball = int(y + roi_y_start)
                             best_radius = int(circle_r)
 
                 # 검출 결과 처리: 이전 위치 유지 로직
@@ -327,10 +316,10 @@ class LineListenerNode(Node): ##################################################
                     # 원 탐지를 했다면
                     self.ball_lost = 0
                     
-                    x1 = max(best_cx_ball - self.roi_x_start - 1, 0)
-                    x2 = min(best_cx_ball - self.roi_x_start + 2, self.roi_x_end - self.roi_x_start)
-                    y1 = max(best_cy_ball - self.roi_y_start - 1, 0)
-                    y2 = min(best_cy_ball - self.roi_y_start + 2, self.roi_y_end - self.roi_y_start)
+                    x1 = max(best_cx_ball - roi_x_start - 1, 0)
+                    x2 = min(best_cx_ball - roi_x_start + 2, roi_x_end - roi_x_start)
+                    y1 = max(best_cy_ball - roi_y_start - 1, 0)
+                    y2 = min(best_cy_ball - roi_y_start + 2, roi_y_end - roi_y_start)
 
                     roi_patch = roi_depth[y1:y2, x1:x2]
                     valid = np.isfinite(roi_patch) & (roi_patch > self.depth_min) & (roi_patch < self.depth_max_ball)
@@ -373,12 +362,12 @@ class LineListenerNode(Node): ##################################################
                         cv2.circle(frame, [best_cx_ball, best_cy_ball], best_radius, self.draw_color, 2)
                     else:
                         self.ball_lost = 3
-                        best_cx_ball = best_cy_ball = best_z_ball = None
 
-                        self.last_cx_ball = self.last_cy_ball = self.last_radius = None
-                        self.last_z_ball = 0
+                        best_cx_ball = best_cy_ball = best_z_ball = None
+                        self.last_cx_ball = self.last_cy_ball = self.last_radius = self.last_z_ball = None
                         
                         self.rect_color = (0, 0, 255)
+
                         is_ball_valid = False
                         self.get_logger().info(f"Miss!")
 
@@ -402,6 +391,7 @@ class LineListenerNode(Node): ##################################################
                         avg_dis = np.mean(dists)
 
                         angle = int(round(math.degrees(math.atan2(avg_cx - self.zandi_x, -avg_cy + self.zandi_y))))
+                        self.last_agv_cy_ball = avg_cy # 다음 프레임에 판단용
 
                         if angle > 90:
                             angle -= 180
@@ -409,18 +399,15 @@ class LineListenerNode(Node): ##################################################
                             angle += 180
                         
                         if angle >= 8:
-                            res = 14
-                        elif angle <= -8:
+                            res = 14 # 우회전
+                        elif angle <= -8: # 좌회전
                             res = 13
-                        else:
+                        else: # 직진
                             res = 12
 
                         self.get_logger().info(f"[Ball] Done: CAM1 found ball | {avg_cx}, {avg_cy}, dis: {avg_dis:.2f}, "
                                             f"res= {res}, angle= {angle} "
                                             f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms")
-                        self.last_angle_ball = angle
-                        self.last_agv_cx_ball = avg_cx
-                        self.last_agv_cy_ball = avg_cy
                         self.last_position_text = f"[Ball] Position: {avg_cx}, {avg_cy}"
                         
                         # 퍼블리시
@@ -436,6 +423,7 @@ class LineListenerNode(Node): ##################################################
                             res = 12
                             angle = 0
                             self.cam_mode = CAM2 # 2번 캠으로 ㄱㄱ
+                            self.last_agv_cy_ball = 0
 
                             self.get_logger().info(f"[Ball] CAM1 Missed, CAM2 will find,,, | frames= {len(self.ball_valid_list)}, "
                                                 f"wall= {process_time*1000:.1f} ms")
@@ -475,7 +463,7 @@ class LineListenerNode(Node): ##################################################
             else:
                 self.last_position_text = "In move"
 
-            cv2.line(frame, (self.roi_x_start, 280), (self.roi_x_end, 280), (250, 122, 122), 1)
+            cv2.line(frame, (roi_x_start, 280), (roi_x_end, 280), (250, 122, 122), 1)
 
         elif self.cam1_mode == HOOP:
             if not self.collecting:
@@ -496,7 +484,7 @@ class LineListenerNode(Node): ##################################################
                     self.last_cx_hoop = self.last_cy_hoop = None
                     self.last_z_hoop = self.last_yaw = None
                     self.last_box_hoop = None
-                    self.last_band_mask = None
+                    self.last_band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
 
                     self.hoop_lost = 0
 
@@ -564,11 +552,11 @@ class LineListenerNode(Node): ##################################################
                         top = max(1, int(round(height * self.band_top_ratio))) # 밴드 두께 - 위
                         side = max(1, int(round(width * self.band_side_ratio))) # 밴드 두께 - 옆
         
-                        top_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)
-                        left_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)
-                        right_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)
-                        inner_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)
-                        band_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8) # 까만 화면 만들고 (0벡터)
+                        top_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
+                        left_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
+                        right_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
+                        inner_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
+                        band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8) # 까만 화면 만들고 (0벡터)
 
                         top_dst = np.array([[0,0],[width,0],[width,top],[0,top]], dtype=np.float32)
                         left_dst = np.array([[0,0],[side,0],[side,height],[0,height]], dtype=np.float32)
@@ -618,9 +606,9 @@ class LineListenerNode(Node): ##################################################
                             if best_score < ratio_band: # 그 중 가장 잘 맞는 거
                                 best_score, best_top_score, best_left_score, best_right_score = ratio_band, ratio_top, ratio_left, ratio_right
                                 best_cnt_hoop = cnt
-                                best_cx_hoop, best_cy_hoop = int(round(box_cx + self.roi_x_start)), int(round(box_cy + self.roi_y_start))
+                                best_cx_hoop, best_cy_hoop = int(round(box_cx + roi_x_start)), int(round(box_cy + roi_y_start))
                                 best_depth_hoop = depth_mean
-                                best_box = (box + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
+                                best_box = (box + np.array([roi_x_start, roi_y_start], dtype=np.float32)).astype(np.int32)
                                 best_band_mask = band_mask
                                 best_left_mask = left_mask
                                 best_right_mask = right_mask
@@ -654,8 +642,8 @@ class LineListenerNode(Node): ##################################################
 
                         x_left_px_roi = float(best_left_src[:, 0].mean())
                         x_right_px_roi = float(best_right_src[:, 0].mean())
-                        x_left_px_full = x_left_px_roi + self.roi_x_start
-                        x_right_px_full = x_right_px_roi + self.roi_x_start
+                        x_left_px_full = x_left_px_roi + roi_x_start
+                        x_right_px_full = x_right_px_roi + roi_x_start
 
                         x_left_m = (x_left_px_full  - self.cx_intr) * depth_left / self.fx
                         x_right_m = (x_right_px_full - self.cx_intr) * depth_right / self.fx # 거리 계산
@@ -717,11 +705,10 @@ class LineListenerNode(Node): ##################################################
                         self.last_cx_hoop = self.last_cy_hoop = None
                         self.last_z_hoop = self.last_yaw = None
                         self.last_box_hoop = None
-                        self.last_band_mask = None
                         
                         self.last_position_text = f'Miss'
                         self.backboard_score_text = f"Miss"
-                        self.last_band_mask = np.zeros((self.roi_y_end - self.roi_y_start, self.roi_x_end - self.roi_x_start), dtype=np.uint8)
+                        self.last_band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)
 
                 self.frames_left -= 1
                 self.hoop_valid_list.append(is_hoop_valid)
@@ -806,8 +793,7 @@ class LineListenerNode(Node): ##################################################
                                 self.last_score = self.last_top_score = self.last_left_score = self.last_right_score = None
                                 self.last_cx_hoop = self.last_cy_hoop = self.last_z_hoop = self.last_yaw = None
                                 self.last_box_hoop = None
-                                self.last_band_mask = None  
-                                self.last_cnt_hoop = None
+                                self.last_band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)  
 
                                 self.cam1_mode = BALL
                                 self.backboard_score_text = "Ball Now"
@@ -849,12 +835,12 @@ class LineListenerNode(Node): ##################################################
                     self.frames_left = 0
                     self.frame_idx = 0
 
-            cv2.rectangle(frame, (int((self.roi_x_start + self.roi_x_end) / 2) - 50, self.roi_y_start), 
-                (int((self.roi_x_start + self.roi_x_end) / 2) + 50, self.roi_y_end), (255, 120, 150), 1)
+            cv2.rectangle(frame, (int((roi_x_start + roi_x_end) / 2) - 50, roi_y_start), 
+                (int((roi_x_start + roi_x_end) / 2) + 50, roi_y_end), (255, 120, 150), 1)
                 
         t6 = time.time()  
 
-        cv2.rectangle(frame, (self.roi_x_start+1, self.roi_y_start+1), (self.roi_x_end-1, self.roi_y_end-1), self.rect_color, 1)
+        cv2.rectangle(frame, (roi_x_start+1, roi_y_start+1), (roi_x_end-1, roi_y_end-1), self.rect_color, 1)
 
         # 딜레이 측정
         elapsed = time.time() - start_time
@@ -870,8 +856,8 @@ class LineListenerNode(Node): ##################################################
             self.last_report_time = now
 
         cv2.putText(frame, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, self.last_position_text, (10, self.roi_y_end + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
-        cv2.putText(frame, self.backboard_score_text, (10, self.roi_y_end + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
+        cv2.putText(frame, self.last_position_text, (10, roi_y_end + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
+        cv2.putText(frame, self.backboard_score_text, (10, roi_y_end + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
 
         if self.collecting:
             if self.cam1_mode == BALL:
@@ -893,7 +879,7 @@ class LineListenerNode(Node): ##################################################
         start_time = time.time()
         # 영상 받아오기
         frame = self.bridge.imgmsg_to_cv2(cam2_color_msg, desired_encoding='bgr8')
-        roi_color = frame[self.roi_y_start:self.roi_y_end, self.roi_x_start:self.roi_x_end]
+        roi_color = frame[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
 
 
         if not self.collecting:
@@ -948,8 +934,8 @@ class LineListenerNode(Node): ##################################################
                     if ratio < best_ratio_ball:
                         best_ratio_ball = ratio
                         best_cnt_ball = cnt
-                        best_cx_ball = int(x + self.roi_x_start)
-                        best_cy_ball = int(y + self.roi_y_start)
+                        best_cx_ball = int(x + roi_x_start)
+                        best_cy_ball = int(y + roi_y_start)
                         best_radius = int(circle_r)
 
             # 검출 결과 처리: 이전 위치 유지 로직
@@ -1014,7 +1000,7 @@ class LineListenerNode(Node): ##################################################
                     dx = avg_cx - self.pick_x
                     dy = avg_cy - self.pick_y
 
-                    if math.hypot(dx, dy) <= pick_rad: # 오케이 조준 완료
+                    if math.hypot(dx, dy) <= self.pick_rad: # 오케이 조준 완료
                         self.cam_mode = CAM1
                         self.cam1_mode = HOOP
 
@@ -1037,8 +1023,6 @@ class LineListenerNode(Node): ##################################################
                                         f"wall= {process_time*1000:.1f} ms")
                         res = 99
 
-                    self.last_agv_cx_ball = avg_cx
-                    self.last_agv_cy_ball = avg_cy
                     self.last_position_text = f"[Ball] Position: {avg_cx}, {avg_cy}"
                     
                     # 퍼블리시
@@ -1082,8 +1066,8 @@ class LineListenerNode(Node): ##################################################
         else:
             self.last_position_text = "In move"
 
-        cv2.rectangle(frame, (self.roi_x_start+1, self.roi_y_start+1), (self.roi_x_end-1, self.roi_y_end-1), self.rect_color, 1)
-        cv2.circle(frame, (self.pick_x, self.pick_y), pick_rad, (111,255,111), 2)
+        cv2.rectangle(frame, (roi_x_start+1, roi_y_start+1), (roi_x_end-1, roi_y_end-1), self.rect_color, 1)
+        cv2.circle(frame, (self.pick_x, self.pick_y), self.pick_rad, (111,255,111), 2)
 
         # 딜레이 측정
         elapsed = time.time() - start_time
@@ -1099,8 +1083,8 @@ class LineListenerNode(Node): ##################################################
             self.last_report_time = now
 
         cv2.putText(frame, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, self.last_position_text, (10, self.roi_y_end + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
-        cv2.putText(frame, self.backboard_score_text, (10, self.roi_y_end + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
+        cv2.putText(frame, self.last_position_text, (10, roi_y_end + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
+        cv2.putText(frame, self.backboard_score_text, (10, roi_y_end + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
 
         if self.collecting:
             cv2.imshow('Basketball Mask', mask) # 기준 거리 이내, 주황색
