@@ -930,7 +930,7 @@ class LineListenerNode(Node): ##################################################
                     (x, y), circle_r = cv2.minEnclosingCircle(cnt)
                     circle_area = circle_r * circle_r * math.pi
                     ratio = abs((area / circle_area) - 1)
-                    # 2. 컨투어 면적과 외접원 면적의 비율이 가장 작은 놈
+                    # 2. 컨투어 면적과 외접원 면적의 비율이 가장 작은 놈1
                     if ratio < best_ratio_ball:
                         best_ratio_ball = ratio
                         best_cnt_ball = cnt
