@@ -8,7 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from collections import Counter
-from my_cv_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
+from robot_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
 from message_filters import Subscriber, ApproximateTimeSynchronizer # type: ignore  동기화용
 from rcl_interfaces.msg import SetParametersResult
 
@@ -32,8 +32,8 @@ class LineListenerNode(Node): ##################################################
         self.zandi_y = int(camera_height - 100)
 
         # pick
-        self.pick_x = self.zandi_x - 100
-        self.pick_y = self.zandi_y - 100
+        self.pick_x = self.zandi_x + 15
+        self.pick_y = self.zandi_y - 80 
         self.pick_rad = 20
 
         # 타이머
@@ -236,7 +236,7 @@ class LineListenerNode(Node): ##################################################
         self.get_logger().info(f"[Pos] x={x - self.zandi_x}, y={-(y - self.zandi_y)} | HSV=({H},{S},{V})")
 
     def motion_callback(self, msg: MotionEnd): # 모션 끝 같이 받아오기 (중복 방지)
-        if bool(msg.end):
+        if bool(msg.motion_end_detect):
             self.armed = True
             self.get_logger().info("Subscribed /motion_end !!!!!!!!!!!!!!!!!!!!!!!!")
 
@@ -1000,7 +1000,20 @@ class LineListenerNode(Node): ##################################################
                     dx = avg_cx - self.pick_x
                     dy = avg_cy - self.pick_y
 
-                    if math.hypot(dx, dy) <= self.pick_rad: # 오케이 조준 완료
+                    # if math.hypot(dx, dy) <= self.pick_rad: # 오케이 조준 완료
+                    #     self.cam_mode = CAM1
+                    #     self.cam1_mode = HOOP
+
+                    #     self.get_logger().info(f"[Ball] Pick! Pos : {dx}, {-dy} | "
+                    #                     f"frames= {len(self.ball_valid_list)}, "
+                    #                     f"wall= {process_time*1000:.1f} ms")
+                    #     self.get_logger().info(f"[Hoop] Findind hoop,,,")
+                    #     res = 9 # pick 모션
+
+                    #     self.last_cx_ball = self.last_cy_ball = self.last_radius = None
+                    #     self.backboard_score_text = "Hoop Now"
+
+                    if abs(dx) <= 25 and abs(dy) <= 15: # 오케이 조준 완료  310 360     315 285
                         self.cam_mode = CAM1
                         self.cam1_mode = HOOP
 
@@ -1013,9 +1026,36 @@ class LineListenerNode(Node): ##################################################
                         self.last_cx_ball = self.last_cy_ball = self.last_radius = None
                         self.backboard_score_text = "Hoop Now"
 
-                    # elif dx, dy,,,
-                        # 여기는 거리 차이에 따라서 미세조정할 세세한 값들 찾기
-                        # 일단은 res = 99로 고정
+
+                    # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
+
+                    elif abs(dx) >= abs(dy):
+                        if abs(dx) >= 60: #만약 보폭이 다를떄 큰 보폭의 길이
+                            if dx > 0: 
+                                res = 8 #right_half
+                        
+                            elif dx < 0:
+                                res = 7 #left_half
+                        else:
+                            if dx > 0: 
+                                res = 8 #right_short
+                    
+                            elif dx < 0:
+                                res = 7 #left_short
+                        
+                    elif abs(dx) < abs(dy):
+                        if abs(dy) >= 60:
+                            if dy > 0:
+                                res = 4 #back_one
+
+                            elif dy < 0:
+                                res = 12 #forward_one
+                        else:
+                            if dy > 0:
+                                res = 5 #back_half
+
+                            elif dy < 0:
+                                res = 6 #forward_half
 
                     else: 
                         self.get_logger().info(f"[Ball] CAM2 Found, Relative position: {dx}, {-dy} | "
@@ -1030,6 +1070,7 @@ class LineListenerNode(Node): ##################################################
                     msg_out.res = res
                     msg_out.angle = angle
                     self.ball_result_pub.publish(msg_out)
+                    self.get_logger().info(f"res = {res}")
 
                 else:
                     self.cam2_miss_count += 1
