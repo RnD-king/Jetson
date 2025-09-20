@@ -573,58 +573,58 @@ class LineListenerNode(Node): ##################################################
 
                             self.last_position_text = f"[Ball] Position: {avg_cx}, {avg_cy}"
 
-                                                    if abs(dx) <= 20 and abs(dy) <= 15: # 오케이 조준 완료  310 360     315 285
-                            self.get_logger().info(f"[Ball] Pick! Pos : {dx}, {-dy} | "
-                                            f"frames= {len(self.ball_valid_list)}, "
-                                            f"wall= {process_time*1000:.1f} ms")
-                            res = 9 # pick 모션
-                            self.picked = True
-                            self.pick_attempt += 1
-
-                        # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
-                        elif abs(dx) <= 20 and abs(dy) > 15:
-                            if abs(dy) >= 60:
-                                if dy > 0:
-                                    res = 4 #back_one
-
-                                elif dy < 0:
-                                    res = 12 #forward_one
-                            else:
-                                if dy > 0:
-                                    res = 5 #back_half
-
-                                elif dy < 0:
-                                    res = 6 #forward_half
-
-                        elif abs(dx) > 20 and abs(dy) <= 15:
-                            if dx > 0: 
-                                res = 8 #right_half
-                        
-                            elif dx < 0:
-                                res = 7 #left_half
-
-                        
-                        elif abs(dx) > 20 and abs(dy) > 15:
-                            if abs(dx) >= abs(dy):
-                                if dx > 0: 
-                                    res = 8 #right_half
-                            
-                                elif dx < 0:
-                                    res = 7 #left_half
-
-                            elif abs(dx) < abs(dy):
+                            if abs(dx) <= 20 and abs(dy) <= 15: # 오케이 조준 완료  310 360     315 285
+                                self.get_logger().info(f"[Ball] Pick! Pos : {dx}, {-dy} | "
+                                                f"frames= {len(self.ball_valid_list)}, "
+                                                f"wall= {process_time*1000:.1f} ms")
+                                res = 9 # pick 모션
+                                self.picked = True
+                                self.pick_attempt += 1
+    
+                            # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
+                            elif abs(dx) <= 20 and abs(dy) > 15:
                                 if abs(dy) >= 60:
                                     if dy > 0:
                                         res = 4 #back_one
-
+    
                                     elif dy < 0:
                                         res = 12 #forward_one
                                 else:
                                     if dy > 0:
                                         res = 5 #back_half
-
+    
                                     elif dy < 0:
                                         res = 6 #forward_half
+    
+                            elif abs(dx) > 20 and abs(dy) <= 15:
+                                if dx > 0: 
+                                    res = 8 #right_half
+                            
+                                elif dx < 0:
+                                    res = 7 #left_half
+    
+                            
+                            elif abs(dx) > 20 and abs(dy) > 15:
+                                if abs(dx) >= abs(dy):
+                                    if dx > 0: 
+                                        res = 8 #right_half
+                                
+                                    elif dx < 0:
+                                        res = 7 #left_half
+    
+                                elif abs(dx) < abs(dy):
+                                    if abs(dy) >= 60:
+                                        if dy > 0:
+                                            res = 4 #back_one
+    
+                                        elif dy < 0:
+                                            res = 12 #forward_one
+                                    else:
+                                        if dy > 0:
+                                            res = 5 #back_half
+    
+                                        elif dy < 0:
+                                            res = 6 #forward_half
                             else: # 여기로 빠질 일 없음
                                 self.get_logger().info(f"[Ball] CAM2 Found, Relative position: {dx}, {-dy} | "
                                                 f"frames= {len(self.ball_valid_list)}, "
