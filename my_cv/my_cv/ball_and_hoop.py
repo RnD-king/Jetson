@@ -55,6 +55,10 @@ class LineListenerNode(Node): ##################################################
         self.last_box_hoop = None
         self.hoop_lost = 0 # H
 
+        self.hoop_r = 0.1 # 골대 반지름
+        self.throwing_range = 0.2 # 공 던지는 거리
+        self.goal_range = 0.05 # 공 던질 때 떨어지는 곳 오차범위
+
         # 변수
         self.draw_color = (0, 255, 0)
         self.rect_color = (0, 255, 0)
@@ -86,6 +90,8 @@ class LineListenerNode(Node): ##################################################
         self.cam1_ball_count = 0
         self.cam2_miss_count = 0
         self.hoop_count = 0
+
+        self.hoop_near_by = False
         
         self.ball_valid_list = []
         self.ball_cx_list = []
@@ -638,7 +644,7 @@ class LineListenerNode(Node): ##################################################
 
                     if nL >= 10 and nR >= 10:
                         depth_left = float(np.mean(left_vals[left_valid])) * self.depth_scale
-                        depth_right = float(np.mean(right_vals[right_valid]))* self.depth_scale
+                        depth_right = float(np.mean(right_vals[right_valid])) * self.depth_scale
 
                         x_left_px_roi = float(best_left_src[:, 0].mean())
                         x_right_px_roi = float(best_right_src[:, 0].mean())
@@ -652,7 +658,7 @@ class LineListenerNode(Node): ##################################################
                         dz = depth_left - depth_right  # 오른쪽이 더 가까우면 + >>>> 내가 회전할 각도
 
                         if abs(dx) > 0.001:  # 1mm
-                            best_yaw = round(math.degrees(math.atan2(dz, dx)), 2)
+                            best_yaw = math.atan2(dz, dx)
                             is_hoop_valid = True   # 어떤 값 쓸건지 판단용
                             self.last_yaw = best_yaw             
 
@@ -729,15 +735,12 @@ class LineListenerNode(Node): ##################################################
 
                         avg_cx = int(round(np.mean(cxs)))
                         avg_dis = round(np.mean(dists),2)
-                        avg_yaw = round(np.median(yaws),2)
+                        avg_yaw_rad = np.median(yaws)
+                        avg_yaw_deg = round(math.degrees(avg_yaw_rad,2))
 
-                        if 0.8 < avg_dis: # 거리가 0.7m 이상 > 일단 골대 쪽으로 직진하기
+                        if 0.7 < avg_dis: # 거리가 0.7m 이상 > 일단 골대 쪽으로 직진하기
 
-                            angle = int(round(math.degrees(math.atan((avg_cx - self.cx_intr) / self.fx))))
-                            if angle > 90:
-                                angle -= 180 # 각도 보정
-                            elif angle <= -90:
-                                angle += 180
+                            angle = int(round(math.degrees(math.atan(-(avg_cx - self.cx_intr) / self.fx))))
                             
                             if angle >= 8:
                                 res = 14
@@ -746,75 +749,93 @@ class LineListenerNode(Node): ##################################################
                             else:
                                 res = 12
                             self.get_logger().info(f"[Hoop] Done: Approaching | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, line angle= {angle}, backboard angle= {avg_yaw} "
+                                                f"res= {res}, line angle= {angle}, backboard angle= {avg_yaw_deg} "
                                                 f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
                             
-                        elif 0.5 <= avg_dis: # 거리가 0.5 ~ 0.8 > 미세 조정
-                            if avg_yaw > 30:
-                                angle = int(round(avg_yaw))
-                                res = 82 # 오른쪽으로 꺾고 왼쪽으로 이동
-                            elif avg_yaw < -30:
-                                angle = int(round(avg_yaw))
-                                res = 83 # 왼쪽으로 꺾고 오른쪽으로 이동
-                            else:
-                                angle = 0
-                                if avg_cx - self.zandi_x > 30:
-                                    res = 72 # 왼쪽 이동
-                                elif avg_cx - self.zandi_x < -30:
-                                    res = 73 # 오른쪽 이동
-                                else:
-                                    res = 12
+                        # elif 0.7 <= avg_dis: # 거리가 0.5 ~ 0.8 > 미세 조정
+                            # if avg_yaw > 30:
+                            #     angle = int(round(avg_yaw))
+                            #     res = 7 # 오른쪽으로 꺾고 왼쪽으로 이동
+                            # elif avg_yaw < -30:
+                            #     angle = int(round(avg_yaw))
+                            #     res = 8 # 왼쪽으로 꺾고 오른쪽으로 이동
+                            # else:
+                            #     angle = 0
+                            #     if avg_cx - self.zandi_x > 30:
+                            #         res = 7 # 왼쪽 이동
+                            #     elif avg_cx - self.zandi_x < -30:
+                            #         res = 8 # 오른쪽 이동
+                            #     else:
+                            #         res = 12
+                            # angle = int(round(math.degrees(math.atan(-(avg_cx - self.cx_intr) / self.fx))))
+                            
+                            # if angle >= 8:
+                            #     res = 14
+                            # elif angle <= -8:
+                            #     res = 13
+                            # else:
+                            #     res = 12
 
-                            self.get_logger().info(f"[Hoop] Done: Near by | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, backboard angle= {avg_yaw} "
-                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
+                            # self.get_logger().info(f"[Hoop] Done: Near by | x: {avg_cx}, dis: {avg_dis}, "
+                            #                     f"res= {res}, backboard angle= {avg_yaw_deg} "
+                            #                     f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
                         
-                        else: # 거리가 0.5m 이내 > 
-                            if avg_yaw > 30:
-                                angle = int(round(avg_yaw))
-                                res = 82 # 오른쪽으로 꺾고 왼쪽으로 이동
-                            elif avg_yaw < -30:
-                                angle = int(round(avg_yaw))
-                                res = 83 # 왼쪽으로 꺾고 오른쪽으로 이동
-                            else:
-                                angle = 0
-                                if avg_cx - self.zandi_x > 50:
-                                    res = 74 # 왼쪽 반 이동
-                                elif avg_cx - self.zandi_x < -50:
-                                    res = 75 # 오른쪽 반 이동
-                                else:
-                                    res = 77 # 던져 던져
+                        else: # 거리가 0.7m 이내 > 
+                            self.hoop_near_by = True
+                            beta_rad = math.atan(-(avg_cx - self.cx_intr) / self.fx) # 백보드 점과의 각도
+                            x_ = avg_dis * math.sin(beta_rad) + self.hoop_r * math.sin(avg_yaw_rad)
+                            z_ = avg_dis * math.cos(beta_rad) - self.hoop_r * math.cos(avg_yaw_rad) - self.throwing_range # x_, z_는 움직여야할 좌표
 
-                            if res == 77:
-                                self.get_logger().info(f"[Hoop] Shoot !! | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, backboard angle= {avg_yaw} "
-                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")  
-
+                            if math.hypot(x_,z_) < self.goal_range:
+                                res = 77
                                 self.last_score = self.last_top_score = self.last_left_score = self.last_right_score = None
                                 self.last_cx_hoop = self.last_cy_hoop = self.last_z_hoop = self.last_yaw = None
                                 self.last_box_hoop = None
                                 self.last_band_mask = np.zeros((roi_y_end - roi_y_start, roi_x_end - roi_x_start), dtype=np.uint8)  
 
+                                self.hoop_near_by = False
                                 self.cam1_mode = BALL
                                 self.backboard_score_text = "Ball Now"
 
+                            elif z_ <= 0: 
+                                res = 5 # 뒤로가기
+
+                            elif abs(x_) >= z_:
+                                if x_ > 0:
+                                    res = 8 # 오른
+                                else: 
+                                    res = 7 # 왼
+                            else:
+                                res = 12 # 앞
+                                
+
+                            if res == 77:
+                                self.get_logger().info(f"[Hoop] Shoot !! | x: {avg_cx}, dis: {avg_dis}, "
+                                                f"res= {res}, backboard angle= {avg_yaw_deg} "
+                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")  
+
                             else: 
                                 self.get_logger().info(f"[Hoop] Done: Almost near by | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, backboard angle= {avg_yaw} "
+                                                f"res= {res}, backboard angle= {avg_yaw_deg} "
                                                 f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
 
                     else:
-                        if self.hoop_count >= 1: # 그 전까지 공을 보고 있었다면
+                        if self.hoop_near_by: # 근접했는데 놓쳤으면 일단 뒤로가서 다시 봐라
+                            res = 5
+                            self.get_logger().info(f"[Hoop] Missed,,, go baack one step | frames= {len(self.hoop_valid_list)}, "
+                                                f"wall= {process_time*1000:.1f} ms")
+                            
+                        elif self.hoop_count >= 1: # 근접하기도 전에 놓쳤으면 일단 뒤로가서 확인해봐라
                             res = 55 # 다시 찾는 모션 >> 제자리에서? 한발짝 뒤에서?
                             angle = 0
 
-                            self.get_logger().info(f"[Hoop] Missed,,, | frames= {len(self.hoop_valid_list)}, "
+                            self.get_logger().info(f"[Hoop] Try again,,, | frames= {len(self.hoop_valid_list)}, "
                                                 f"wall= {process_time*1000:.1f} ms")
                             
-                            self.hoop_count = 0
+                            self.hoop_count -= 1
                             self.last_position_text = "No hoop"
 
-                        else: 
+                        else: # 아깐 잘못 봤나봐 (두 번이상 놓쳤을 때)
                             self.get_logger().info(f"[Hoop] No hoop detected | frames= {len(self.hoop_valid_list)}, "
                                                 f"wall= {process_time*1000:.1f} ms")
                             
@@ -840,7 +861,7 @@ class LineListenerNode(Node): ##################################################
                 
         t6 = time.time()  
 
-        cv2.rectangle(frame, (roi_x_start+1, roi_y_start+1), (roi_x_end-1, roi_y_end-1), self.rect_color, 1)
+        cv2.rectangle(frame, (roi_x_start + 1, roi_y_start + 1), (roi_x_end - 1, roi_y_end - 1), self.rect_color, 1)
 
         # 딜레이 측정
         elapsed = time.time() - start_time
@@ -1029,21 +1050,8 @@ class LineListenerNode(Node): ##################################################
 
                     # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
 
-                    elif abs(dx) >= abs(dy):
-                        if abs(dx) >= 60: #만약 보폭이 다를떄 큰 보폭의 길이
-                            if dx > 0: 
-                                res = 8 #right_half
-                        
-                            elif dx < 0:
-                                res = 7 #left_half
-                        else:
-                            if dx > 0: 
-                                res = 8 #right_short
-                    
-                            elif dx < 0:
-                                res = 7 #left_short
-                        
-                    elif abs(dx) < abs(dy):
+
+                    elif abs(dx) <= 25 and abs(dy) > 15:
                         if abs(dy) >= 60:
                             if dy > 0:
                                 res = 4 #back_one
@@ -1056,6 +1064,49 @@ class LineListenerNode(Node): ##################################################
 
                             elif dy < 0:
                                 res = 6 #forward_half
+
+                    elif abs(dx) > 25 and abs(dy) <= 15:
+                        if abs(dx) >= 60: #만약 보폭이 다를떄 큰 보폭의 길이
+                            if dx > 0: 
+                                res = 8 #right_half
+                        
+                            elif dx < 0:
+                                res = 7 #left_half
+                        else:
+                            if dx > 0: 
+                                res = 8 #right_short
+                    
+                            elif dx < 0:
+                                res = 7 #left_short
+                    
+                    elif abs(dx) > 25 and abs(dy) > 15:
+                        if abs(dx) >= abs(dy):
+                            if abs(dx) >= 60: #만약 보폭이 다를떄 큰 보폭의 길이
+                                if dx > 0: 
+                                    res = 8 #right_half
+                            
+                                elif dx < 0:
+                                    res = 7 #left_half
+                            else:
+                                if dx > 0: 
+                                    res = 8 #right_short
+                        
+                                elif dx < 0:
+                                    res = 7 #left_short
+
+                        elif abs(dx) < abs(dy):
+                            if abs(dy) >= 60:
+                                if dy > 0:
+                                    res = 4 #back_one
+
+                                elif dy < 0:
+                                    res = 12 #forward_one
+                            else:
+                                if dy > 0:
+                                    res = 5 #back_half
+
+                                elif dy < 0:
+                                    res = 6 #forward_half
 
                     else: 
                         self.get_logger().info(f"[Ball] CAM2 Found, Relative position: {dx}, {-dy} | "
@@ -1096,7 +1147,7 @@ class LineListenerNode(Node): ##################################################
                         msg_out.res = res
                         msg_out.angle = angle
                         self.ball_result_pub.publish(msg_out)
-
+                        # 오른쪽 움직일 때 회전하느라공 뒤로 사라지는 거 생각하기
                 # 리셋
                 self.collecting = False
                 self.frames_left = 0
