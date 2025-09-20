@@ -97,8 +97,8 @@ class LineListenerNode(Node): ##################################################
         # 파라미터 선언 B
         self.declare_parameter("cam_mode", 1)
 
-        self.declare_parameter("orange_h_low", 2) 
-        self.declare_parameter("orange_h_high", 10)  
+        self.declare_parameter("orange_h_low", 8) 
+        self.declare_parameter("orange_h_high", 60)  
         self.declare_parameter("orange_s_low", 80)  
         self.declare_parameter("orange_s_high", 255)  
         self.declare_parameter("orange_v_low", 130)  
