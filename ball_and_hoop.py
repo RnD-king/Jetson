@@ -8,7 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from collections import Counter
-from robot_msgs.msg import BallResult, HoopResult, MotionEnd # type: ignore
+from robot_msgs.msg import BallResult, MotionEnd # type: ignore
 from message_filters import Subscriber, ApproximateTimeSynchronizer # type: ignore  동기화용
 from rcl_interfaces.msg import SetParametersResult
 
@@ -40,9 +40,10 @@ class LineListenerNode(Node): ##################################################
         self.frame_count = 0
         self.total_time = 0.0
         self.last_report_time = time.time()
+        self.line_start_time = None        # 윈도우 시작 시각 (wall-clock)
+        
         self.last_avg_text = "AVG: --- ms | FPS: --"
         self.last_position_text = 'Dist: -- m | Pos: --, --' # 위치 출력
-
         self.backboard_score_text = 'Miss' # H
 
         # 추적
@@ -56,7 +57,7 @@ class LineListenerNode(Node): ##################################################
         self.hoop_lost = 0 # H
 
         self.hoop_r = 0.1 # 골대 반지름
-        self.throwing_range = 0.25 # 공 던지는 거리
+        self.throwing_range = 0.4 # 공 던지는 거리
         self.goal_range = 0.05 # 공 던질 때 떨어지는 곳 오차범위
 
         # 변수
@@ -85,23 +86,17 @@ class LineListenerNode(Node): ##################################################
         self.frame_idx = 0       
         self.frames_left = 0       # 남은 프레임 수 < collecting_frames
         self.collecting_frames = 15
-        self.line_start_time = None        # 윈도우 시작 시각 (wall-clock)
-
+        
         self.cam1_ball_count = 0
         self.cam2_miss_count = 0
         self.hoop_count = 0
-
         self.pick_attempt = 0
-        self.backboard_score_text = "Hoop Now"
+
         self.picked = False
         self.ball_saw_once = False
         self.ball_never_seen = True
-        self.cam2_miss_count = 0
         self.hoop_near_by = False
 
-        self.ball_never_seen = False
-        self.ball_saw_once = False
-        
         self.ball_valid_list = []
         self.ball_cx_list = []
         self.ball_cy_list = []
@@ -424,16 +419,8 @@ class LineListenerNode(Node): ##################################################
                             res = 12
 
                         self.get_logger().info(f"[Ball] Done: CAM1 found ball | {avg_cx}, {avg_cy}, dis: {avg_dis:.2f}, "
-                                            f"res= {res}, angle= {angle} "
-                                            f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms")
+                                            f"angle= {angle}")
                         self.last_position_text = f"[Ball] Position: {avg_cx}, {avg_cy}"
-                        
-                        # 퍼블리시
-                        msg_out = BallResult()
-                        msg_out.res = res
-                        #msg_out.angle = abs(angle)
-                        self.ball_result_pub.publish(msg_out)
-
                         self.cam1_ball_count += 1
 
                     else:
@@ -443,8 +430,7 @@ class LineListenerNode(Node): ##################################################
                             self.cam_mode = CAM2 # 2번 캠으로 ㄱㄱ
                             self.last_agv_cy_ball = 0
 
-                            self.get_logger().info(f"[Ball] CAM1 Missed, CAM2 will find,,, | frames= {len(self.ball_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Ball] CAM1 Missed, CAM2 will find,,,")
                             
                             self.last_position_text = "Recieving,,,"
                             self.cam1_ball_count = 0
@@ -452,32 +438,31 @@ class LineListenerNode(Node): ##################################################
                             self.last_cx_ball = self.last_cy_ball = self.last_z_ball = self.last_radius = None
                             self.backboard_score_text = "Ball Now"
 
-                            # 퍼블리시
-                            msg_out = BallResult()
-                            msg_out.res = res
-                            msg_out.angle = abs(angle)
-                            self.ball_result_pub.publish(msg_out)
-
                         elif self.cam1_ball_count == 1:
-                            self.get_logger().info(f"[Ball] Wrong thing | frames= {len(self.ball_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Ball] Wrong thing")
 
                             self.last_position_text = "Back to line,,,"
                             self.cam1_ball_count = 0
                         
                         else: 
-                            self.get_logger().info(f"[Ball] No ball detected | frames= {len(self.ball_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Ball] No ball detected")
                             
                             self.last_position_text = "No ball"
                             self.cam1_ball_count = 0
 
+                    # 퍼블리시
+                    msg_out = BallResult()
+                    msg_out.res = res
+                    msg_out.angle = abs(angle)
+                    self.ball_result_pub.publish(msg_out)
+
+                    self.get_logger().info(f"res= {res}")
+                    self.get_logger().info(f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms")
+                    
                     # 리셋
                     self.collecting = False
                     self.frames_left = 0
                     self.frame_idx = 0
-
-                    self.last_position_text = ""
             else:
                 self.last_position_text = "In move"
 
@@ -762,8 +747,7 @@ class LineListenerNode(Node): ##################################################
                             else:
                                 res = 12
                             self.get_logger().info(f"[Hoop] Done: Approaching | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, line angle= {angle}, backboard angle= {avg_yaw_deg} "
-                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
+                                                f"line angle= {angle}, backboard angle= {avg_yaw_deg}")
                             
                         # elif 0.7 <= avg_dis: # 거리가 0.5 ~ 0.8 > 미세 조정
                             # if avg_yaw > 30:
@@ -824,34 +808,29 @@ class LineListenerNode(Node): ##################################################
 
                             if res == 17:
                                 self.get_logger().info(f"[Hoop] Shoot !! | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, backboard angle= {avg_yaw_deg} "
-                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")  
+                                                f"backboard angle= {avg_yaw_deg}")  
 
                             else: 
                                 self.get_logger().info(f"[Hoop] Done: Almost near by | x: {avg_cx}, dis: {avg_dis}, "
-                                                f"res= {res}, backboard angle= {avg_yaw_deg} , beta= {math.degrees(beta_rad)}"
-                                                f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
+                                                f"backboard angle= {avg_yaw_deg} , beta= {math.degrees(beta_rad)}")
 
                     else:
                         if self.hoop_near_by: # 근접했는데 놓쳤으면 일단 뒤로가서 다시 봐라
                             res = 5
-                            self.get_logger().info(f"[Hoop] Missed,,, go baack one step | frames= {len(self.hoop_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Hoop] Missed,,, go baack one step")
                             angle = 0
                             
                         elif self.hoop_count >= 1: # 근접하기도 전에 놓쳤으면 일단 뒤로가서 확인해봐라
                             res = 55 # 다시 찾는 모션 >> 제자리에서? 한발짝 뒤에서?
                             angle = 0
 
-                            self.get_logger().info(f"[Hoop] Try again,,, | frames= {len(self.hoop_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Hoop] Try again,,,")
                             
                             self.hoop_count -= 1
                             self.last_position_text = "No hoop"
 
                         else: # 아깐 잘못 봤나봐 (두 번이상 놓쳤을 때)
-                            self.get_logger().info(f"[Hoop] No hoop detected | frames= {len(self.hoop_valid_list)}, "
-                                                f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Hoop] No hoop detected")
                             
                             self.last_position_text = "No hoop"
                             self.hoop_count = 0
@@ -864,6 +843,9 @@ class LineListenerNode(Node): ##################################################
                     msg_out.res = res
                     msg_out.angle = abs(angle)
                     self.ball_result_pub.publish(msg_out)
+
+                    self.get_logger().info(f"res= {res}")
+                    self.get_logger().info(f"frames= {len(self.hoop_valid_list)}, wall= {process_time*1000:.1f} ms")
 
                     # 리셋
                     self.collecting = False
@@ -905,6 +887,63 @@ class LineListenerNode(Node): ##################################################
 
         cv2.imshow('Detection', frame)
         cv2.waitKey(1)
+
+    def decide_to_pick(self, dx, dy, process_time):
+        if abs(dx) <= 20 and abs(dy) <= 15: # 오케이 조준 완료  310 360     315 285
+            res = 9 # pick 모션
+            self.picked = True
+            self.pick_attempt += 1
+
+        # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
+        elif abs(dx) <= 20 and abs(dy) > 10:
+            if abs(dy) >= 60:
+                if dy > 0:
+                    res = 4 #back_one
+
+                elif dy < 0:
+                    res = 12 #forward_one
+            else:
+                if dy > 0:
+                    res = 5 #back_half
+
+                elif dy < 0:
+                    res = 6 #forward_half
+
+        elif abs(dx) > 20 and abs(dy) <= 10:
+            if dx > 0: 
+                res = 8 #right_half
+        
+            elif dx < 0:
+                res = 7 #left_half
+        
+        elif abs(dx) > 20 and abs(dy) > 10:
+            if abs(dx) >= abs(dy):
+                if dx > 0: 
+                    res = 8 #right_half
+            
+                elif dx < 0:
+                    res = 7 #left_half
+
+            elif abs(dx) < abs(dy):
+                if abs(dy) >= 60:
+                    if dy > 0:
+                        res = 4 #back_one
+
+                    elif dy < 0:
+                        res = 12 #forward_one
+                else:
+                    if dy > 0:
+                        res = 5 #back_half
+
+                    elif dy < 0:
+                        res = 6 #forward_half
+
+        else: # 여기로 빠질 일 없음
+            self.get_logger().info(f"[Ball] CAM2 Found, Relative position: {dx}, {-dy} | "
+                            f"frames= {len(self.ball_valid_list)}, "
+                            f"wall= {process_time*1000:.1f} ms")
+            res = 99 
+        return res
 
     def cam2_image_callback(self, cam2_color_msg: Image): # cam1, cam2 분리하기
 
@@ -1044,30 +1083,23 @@ class LineListenerNode(Node): ##################################################
                     if self.picked: # 줍기 모션을 했다면 >> 나 방금 주웠는데 눈 앞에 공이 또 있네?
                         if self.pick_attempt >= 3: # 3번 넘게 실패
                             res = 22
-                            self.get_logger().info(f"[Ball] Failed to pick,,, I'll give up | Pos : {dx}, {-dy} | "
-                            f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms "
-                            f"attempt= {self.pick_attempt}")
+                            self.get_logger().info(f"[Ball] Failed to pick,,, I'll give up | Pos : {dx}, {-dy} | attempt= {self.pick_attempt}")
 
                             self.last_cx_ball = self.last_cy_ball = self.last_radius = None
                             self.pick_attempt = 0
                             self.backboard_score_text = "Hoop Now"
 
-                            self.cam2_miss_count = 0
                             self.picked = False
                             self.ball_saw_once = False
                             self.ball_never_seen = True
                             self.cam_mode = CAM1
                             self.cam1_mode = BALL # 공 못 주웠으니, 골대 찾을 필요가 없다 
-                            # 그러니까 이 뒤에 당분간 10번 정도는 공을 봐도 무시하게끔 (res = 99) 주는 플래그 넣고,
-                            # 코드 전체에 두르자
 
                         else: # 시도는 3번만
-                            res = 9
+                            res = self.decide_to_pick(dx, dy, process_time)
                             self.picked = True
                             self.pick_attempt += 1
-                            self.get_logger().info(f"[Ball] Pick one more time! Pos : {dx}, {-dy} | "
-                            f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms "
-                            f"attempt= {self.pick_attempt}")
+                            self.get_logger().info(f"[Ball] Pick one more time! | Pos : {dx}, {-dy}, attempt {self.pick_attempt}")
 
                     else: # 아직 줍지 않았고, 공은 발견함 (평소 루프)
 
@@ -1085,75 +1117,18 @@ class LineListenerNode(Node): ##################################################
                         #     self.backboard_score_text = "Hoop Now"
 
                         self.last_position_text = f"[Ball] Position: {avg_cx}, {avg_cy}"
-
-                        if abs(dx) <= 20 and abs(dy) <= 15: # 오케이 조준 완료  310 360     315 285
-                            self.get_logger().info(f"[Ball] Pick! Pos : {dx}, {-dy} | "
-                                            f"frames= {len(self.ball_valid_list)}, "
-                                            f"wall= {process_time*1000:.1f} ms")
-                            res = 9 # pick 모션
-                            self.picked = True
-                            self.pick_attempt += 1
-
-                        # x합격, y 합격 나누고 둘다 불합격일떄만 크기 비교해서 하기
-                        elif abs(dx) <= 20 and abs(dy) > 10:
-                            if abs(dy) >= 60:
-                                if dy > 0:
-                                    res = 4 #back_one
-
-                                elif dy < 0:
-                                    res = 12 #forward_one
-                            else:
-                                if dy > 0:
-                                    res = 5 #back_half
-
-                                elif dy < 0:
-                                    res = 6 #forward_half
-
-                        elif abs(dx) > 20 and abs(dy) <= 10:
-                            if dx > 0: 
-                                res = 8 #right_half
-                        
-                            elif dx < 0:
-                                res = 7 #left_half
-
-                        
-                        elif abs(dx) > 20 and abs(dy) > 10:
-                            if abs(dx) >= abs(dy):
-                                if dx > 0: 
-                                    res = 8 #right_half
-                            
-                                elif dx < 0:
-                                    res = 7 #left_half
-
-                            elif abs(dx) < abs(dy):
-                                if abs(dy) >= 60:
-                                    if dy > 0:
-                                        res = 4 #back_one
-
-                                    elif dy < 0:
-                                        res = 12 #forward_one
-                                else:
-                                    if dy > 0:
-                                        res = 5 #back_half
-
-                                    elif dy < 0:
-                                        res = 6 #forward_half
-
-                        else: # 여기로 빠질 일 없음
-                            self.get_logger().info(f"[Ball] CAM2 Found, Relative position: {dx}, {-dy} | "
-                                            f"frames= {len(self.ball_valid_list)}, "
-                                            f"wall= {process_time*1000:.1f} ms")
-                            res = 99 
+                        res = self.decide_to_pick(dx, dy, process_time)
+                        self.get_logger().info(f"[Ball] Pick! | Pos : {dx}, {-dy}, attempt {self.pick_attempt}")
 
                 else: # 탐지 실패
                     self.get_logger().info(f"picked = {self.picked}")
                     if self.picked: # 방금 줍는 모션을 했는데 내 눈앞에 공이 없다 = 잘 주웠다 (아니면 흘렸거나)
-                        self.get_logger().info(f"[Ball] I made it! | frames= {len(self.ball_valid_list)}, "
-                                            f"wall= {process_time*1000:.1f} ms")
+                        self.get_logger().info(f"[Ball] I made it! | , attempt {self.pick_attempt}")
                         res = 10 # 재그립 모션
 
                         self.last_cx_ball = self.last_cy_ball = self.last_radius = None
                         self.backboard_score_text = "Hoop Now"
+                        self.last_position_text = f""
 
                         self.cam2_miss_count = 0
                         self.pick_attempt = 0
@@ -1169,29 +1144,27 @@ class LineListenerNode(Node): ##################################################
                             self.cam2_miss_count += 1
 
                             if self.cam2_miss_count >= 5: # 한 번 봐놓고 공을 5번 연속이나 못 보면 뭐할까?  >>>  뭔가 찾는 모션
-                                self.get_logger().info(f"[Ball] I totally missed,,, | frames= {len(self.ball_valid_list)}, "
-                                                    f"wall= {process_time*1000:.1f} ms")
+                                self.get_logger().info(f"[Ball] I totally missed,,,")
                                 res = 99
                                 self.last_position_text = f""
                             
                             else: # 한번만 다시 봐봐
-                                self.get_logger().info(f"[Ball] Retry,,, | frames= {len(self.ball_valid_list)}, "
-                                                    f"wall= {process_time*1000:.1f} ms")
+                                self.get_logger().info(f"[Ball] Retry,,, | miss= {self.cam2_miss_count}")
                                 res = 99
                                 self.last_position_text = "Miss"
                                 # 오른쪽 움직일 때 회전하느라공 뒤로 사라지는 거 생각하기
                         
                         else: # 공을 탐지도 못 했고, 줍지도 않았고 공을 본 적도 없음 = 방금 막 HOOP모드에서 바뀜 >> 직진만 하면서 찾아보자
-                            self.get_logger().info(f"[Ball] Finding,,, | frames= {len(self.ball_valid_list)}, "
-                                                    f"wall= {process_time*1000:.1f} ms")
+                            self.get_logger().info(f"[Ball] Finding,,,")
                             res = 12
-                            self.last_position_text = f""
+                            self.last_position_text = f"finding"
         
                 msg_out = BallResult()
                 msg_out.res = res
                 msg_out.angle = angle
                 self.ball_result_pub.publish(msg_out)
                 self.get_logger().info(f"res = {res}")
+                self.get_logger().info(f"frames= {len(self.ball_valid_list)}, wall= {process_time*1000:.1f} ms")
                 # 리셋
                 self.collecting = False
                 self.frames_left = 0
