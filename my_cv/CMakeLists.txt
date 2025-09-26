@@ -91,6 +91,7 @@ install(PROGRAMS
   my_cv/hurdle_detect.py
   my_cv/hoop_detect.py
   my_cv/yolo_line_subscriber.py
+  my_cv/color_mask_test.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
