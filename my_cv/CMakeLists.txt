@@ -85,7 +85,7 @@ install(TARGETS yolo_cpp
 # Python 실행 스크립트 설치
 install(PROGRAMS
   my_cv/ball_detect.py
-  my_cv/ball_detect3.py
+  my_cv/ball_and_hoop.py
   my_cv/ball_recieve.py
   my_cv/image_saver.py
   my_cv/hurdle_detect.py
