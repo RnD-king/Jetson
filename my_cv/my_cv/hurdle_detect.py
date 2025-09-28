@@ -1,65 +1,91 @@
 #!/usr/bin/env python3
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from geometry_msgs.msg import PointStamped
-from cv_bridge import CvBridge
-from rcl_interfaces.msg import SetParametersResult
-
 import rclpy as rp
 import numpy as np
 import cv2
-import time
 import math
+import time
+
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from collections import Counter
+from robot_msgs.msg import HurdleResult, MotionEnd
+from rcl_interfaces.msg import SetParametersResult
+
+# 근접에서 사각형 각도 90도 돌아간 거
+# dis값 이상한거, 하한값 넣기
+# 근접에서 구간 거리 표시할까
+
+camera_width = 640
+camera_height = 480
+
+zandi_x = int(camera_width / 2)
+zandi_y = int(camera_height / 2) + 140
+
+zandi_half_width = 150  # 잔디 중심부터 새끼발톱까지 x 거리 << 허들 박지 마라
 
 class HurdleDetectorNode(Node):
     def __init__(self):
         super().__init__('hurdle_detector')
 
-        # 공용 변수
-        self.image_width = 640
-        self.image_height = 480
-
-        self.roi_x_start = int(self.image_width * 1 // 5)  # 초록 박스 관심 구역
-        self.roi_x_end   = int(self.image_width * 4 // 5)
-        self.roi_y_start = int(self.image_height * 1 // 12)
-        self.roi_y_end   = int(self.image_height * 12 // 12)
-
-        # zandi
-        self.zandi_x = int((self.roi_x_start + self.roi_x_end) / 2)
-        self.zandi_y = int(self.image_height - 100)
+        self.roi_x_start = int(camera_width * 0 // 5)
+        self.roi_x_end = int(camera_width * 5 // 5)
+        self.roi_y_start = int(camera_height * 1 // 12)
+        self.roi_y_end = int(camera_height * 12 // 12)
 
         # 타이머 
         self.frame_count = 0
         self.total_time = 0.0
         self.last_report_time = time.time()
-        self.last_position_text = 'Dist: -- m | Pos: --, --'
+        self.line_start_time = None
+
+        self.last_position_text = ""
         self.last_avg_text = 'AVG: --- ms | FPS: --'
 
         # 추적
-        self.last_cx = None
-        self.last_cy = None
-        self.last_w = None
-        self.last_h = None
-        self.last_angle = None
-        self.last_dis = None
-        self.lost = 0
+        self.last_cy_hurdle = self.last_h = self.last_left_y = self.last_right_y = None
+        self.last_dis = self.last_angle = self.last_box = None
+        self.hurdle_lost = 0
 
         # 변수
         self.hurdle_color = (0, 255, 0)
         self.rect_color = (0, 255, 0)
+
+        self.collecting = False     # 수집 중 여부
+        self.armed = False               # motion_end 방어~!
+
+        self.window_id = 0
+        self.frame_idx = 0       
+        self.frames_left = 0       # 남은 프레임 수 < collecting_frames
+        self.collecting_frames = 15
+
+        self.hurdle_never_seen = True
+        self.hurdle_saw_once = False
+
+        self.hurdle_miss_count = 0
+
+        self.hurdle_valid_list = []  
+        self.hurdle_angle_list = []   
+        self.hurdle_dis_list = []
         
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3)) # 가로 우대
+        self.kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3)) # 가로 9 세로 3
         
         self.bridge = CvBridge()
         self.subscription_color = self.create_subscription(  # 컬러
             Image,
             '/camera/color/image_raw',  # RealSense에서 제공하는 컬러 이미지 토픽  >>  640x480 / 15fps
-            self.image_callback, 10)
+            self.cam2_image_callback, 10)
+        
+        self.motion_end_sub = self.create_subscription(  # 모션엔드
+            MotionEnd,                   
+            '/motion_end',                   
+            self.motion_callback, 10) 
         
         # 퍼블리셔
-        self.pub_hurdle = self.create_publisher(PointStamped, '/hurdle/position', 10)
+        self.hurdle_result_pub = self.create_publisher(HurdleResult, '/hurdle_result', 10)
         
         # 파라미터 선언
+        self.declare_parameter("hurdle_near_by", False) # 허들 가까이 왔는지
         self.declare_parameter("l_low", 40) # 어둡고
         self.declare_parameter("l_high", 255)  # 밝고
         self.declare_parameter("a_low", 90)  # 초록
@@ -68,6 +94,7 @@ class HurdleDetectorNode(Node):
         self.declare_parameter("b_high", 255)  # 노랑
 
         # 파라미터 적용
+        self.hurdle_near_by = self.get_parameter("hurdle_near_by").value
         self.l_low = self.get_parameter("l_low").value
         self.l_high = self.get_parameter("l_high").value
         self.a_low = self.get_parameter("a_low").value
@@ -83,182 +110,387 @@ class HurdleDetectorNode(Node):
 
         # 화면 클릭
         cv2.namedWindow('Hurdle Detection')
-        cv2.setMouseCallback('Hurdle Detection', self.click)   
+        cv2.setMouseCallback('Hurdle Detection', self.on_click) 
+
+    def set_roi(self, near: bool):
+        if near:
+            self.roi_x_start = camera_width * 2 // 5
+            self.roi_x_end   = camera_width * 3 // 5
+            self.roi_y_start = camera_height * 4 // 12
+            self.roi_y_end   = camera_height * 12 // 12
+        else:
+            self.roi_x_start = camera_width * 0 // 5
+            self.roi_x_end   = camera_width * 5 // 5
+            self.roi_y_start = camera_height * 1 // 12
+            self.roi_y_end   = camera_height * 12 // 12  
 
     def parameter_callback(self, params):
-        for param in params:
-            if param.name == "l_low":
-                if param.value >= 0 and param.value <= self.l_high:
-                    self.l_low = param.value
-                else:
-                    return SetParametersResult(successful=False)
-            if param.name == "l_high":
-                if param.value >= self.l_low and param.value <= 255:
-                    self.l_high = param.value
-                else:
-                    return SetParametersResult(successful=False)
-            if param.name == "a_low":
-                if param.value >= 0 and param.value <= self.a_high:
-                    self.a_low = param.value
-                else:
-                    return SetParametersResult(successful=False)
-            if param.name == "a_high":
-                if param.value >= self.a_low and param.value <= 255:
-                    self.a_high = param.value
-                else:
-                    return SetParametersResult(successful=False)
-            if param.name == "b_low":
-                if param.value >= 0 and param.value <= self.b_high:
-                    self.b_low = param.value
-                else:
-                    return SetParametersResult(successful=False)
-            if param.name == "b_high":
-                if param.value >= self.b_low and param.value <= 255:
-                    self.b_high = param.value
-                else:
-                    return SetParametersResult(successful=False)
+        for p in params:
+            if p.name == "hurdle_near_by": 
+                self.hurdle_near_by = bool(p.value)
+                self.set_roi(self.hurdle_near_by)
+            elif p.name == "l_low": self.l_low = int(p.value)
+            elif p.name == "l_high": self.l_high = int(p.value)
+            elif p.name == "a_low": self.a_low = int(p.value)
+            elif p.name == "a_high": self.a_high = int(p.value)
+            elif p.name == "b_low": self.b_low = int(p.value)
+            elif p.name == "b_high": self.b_high = int(p.value)
             
-            self.lower_lab = np.array([self.l_low, self.a_low, self.b_low ], dtype=np.uint8) # 색공간 변하면 적용
-            self.upper_lab = np.array([self.l_high, self.a_high, self.b_high], dtype=np.uint8)
+        self.lower_lab = np.array([self.l_low, self.a_low, self.b_low ], dtype=np.uint8) # 색공간 변하면 적용
+        self.upper_lab = np.array([self.l_high, self.a_high, self.b_high], dtype=np.uint8)
             
         return SetParametersResult(successful=True)
     
-    def click(self, event, x, y, _, __): # 화면 클릭
+    def on_click(self, event, x, y, _, __): # 화면 클릭
         if event != cv2.EVENT_LBUTTONDOWN or self.lab is None:
             return
         if (self.roi_x_start <= x <= self.roi_x_end and self.roi_y_start <= y <= self.roi_y_end):
-            # LAB 및 BGR 읽기
-            L, A, B = [int(v) for v in self.lab[y - self.roi_y_start, x - self.roi_x_start]]
-            self.get_logger().info(f"[Pos] x={x - self.zandi_x}, y={- (y - self.zandi_y)} | LAB=({L},{A},{B})")
+            rx = x - self.roi_x_start
+            ry = y - self.roi_y_start
+            k = 1  # (3,3)
+
+            y0, y1 = max(0, ry - k), min(self.roi_y_end - self.roi_y_start, ry + k + 1)
+            x0, x1 = max(0, rx - k), min(self.roi_x_end - self.roi_x_start, rx + k +1)
+            patch = self.lab[y0:y1, x0:x1].reshape(-1,3)
+            L, A, B = np.mean(patch, axis=0).astype(int)
+            self.get_logger().info(f"[Pos] x={x - zandi_x}, y={- (y - zandi_y)} | LAB=({L},{A},{B})")
         else:
             return
+        
+    def motion_callback(self, msg: MotionEnd): # 모션 끝 같이 받아오기 (중복 방지)
+        if bool(msg.motion_end_detect):
+            self.armed = True
+            self.get_logger().info("Subscribed /motion_end !!!!!!!!!!!!!!!!!!!!!!!!")
 
-    def image_callback(self, color_msg: Image):
+    def cam2_image_callback(self, color_msg: Image):
         start_time = time.time()
 
         frame  = self.bridge.imgmsg_to_cv2(color_msg, desired_encoding='bgr8')
         roi_color = frame[self.roi_y_start:self.roi_y_end, self.roi_x_start:self.roi_x_end]
-        # ----------------------------------------------------------------------------------------------- 색보정 (CUDA X)
-        # Lab 채널 이진화
-        self.lab = cv2.cvtColor(roi_color, cv2.COLOR_BGR2Lab)
-        mask_ab = cv2.inRange(self.lab, self.lower_lab, self.upper_lab)
+        if not self.collecting:
+            if self.armed:
+                self.collecting = True
+                self.armed = False
+                self.frames_left = self.collecting_frames
+                self.window_id += 1
+                
+                # 초기화
+                self.hurdle_valid_list.clear()
+                self.hurdle_angle_list.clear()
+                self.hurdle_dis_list.clear()
+                self.frame_idx = 0
 
-        # 모폴로지 가로 9, 세로 3
-        mask = cv2.morphologyEx(mask_ab, cv2.MORPH_CLOSE, self.kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  self.kernel, iterations=1)
- 
-        # 컨투어 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                self.last_cy_hurdle = self.last_h = self.last_left_y = self.last_right_y = None
+                self.last_dis = self.last_angle = self.last_box = None
+                self.hurdle_lost = 0
 
-        best_cnt = None
-        cx_best = cy_best = w_best = h_best = 0
-        angle_best =  0
+                self.line_start_time = time.time()
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > 500:   # 1. 너무 작은 건 제외
-                (rcx, rcy), (rw, rh), rang = cv2.minAreaRect(cnt) # 외접 사각형 그리고
-                if rh > rw:
-                    rw, rh = rh, rw
-                    rang += 90
-                aspect = rw / rh
-                if aspect > 5.0:     # 2. 가로세로 비율            
-                    rect_area = rw * rh
-                    fill_ratio = area / rect_area
-                    if 0.5 <= fill_ratio:  # 3. 면적 비율                               
-                        if rw > w_best and rw > 30: # 4. 가로가 제일 긴 박스
+                self.hurdle_color = (0, 255, 0)
+                self.rect_color = (0, 255, 0)
+
+                self.get_logger().info(f'[Start] Window {self.window_id} | I got {self.collecting_frames} frames')
+
+        if self.collecting:
+            self.frame_idx += 1
+            self.get_logger().info(f"step {self.frame_idx}")
+
+            # Lab 
+            self.lab = cv2.cvtColor(roi_color, cv2.COLOR_BGR2Lab)
+            mask_ab = cv2.inRange(self.lab, self.lower_lab, self.upper_lab)
+
+            # 모폴로지 가로 9, 세로 3
+            mask = cv2.morphologyEx(mask_ab, cv2.MORPH_CLOSE, self.kernel, iterations=1)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel, iterations=1)
+    
+            # 컨투어 
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            best_cnt = None
+            best_cy_hurdle = best_h_hurdle = None
+            best_angle = None
+            best_vx = best_vy = best_y0 = None
+            best_w_hurdle = 100
+            best_ratio = 0.5
+
+            if self.hurdle_near_by:
+                for cnt in contours:
+                    area = cv2.contourArea(cnt)
+                    if area > 300:
+                        (rcx, rcy), (rw, rh), rang = cv2.minAreaRect(cnt)
+                        if rw < rh:
+                            rw, rh = rh, rw 
+                        rect_area = rw * rh
+                        fill_ratio = area / rect_area
+                        if best_ratio < fill_ratio:
+                            best_ratio = fill_ratio
                             best_cnt = cnt
-                            cx_best, cy_best = int(rcx), int(rcy)
-                            w_best, h_best = float(rw), float(rh)
-                            angle_best = float(rang)
+                            best_angle = abs(rang)
+                            best_box = cv2.boxPoints(((rcx, rcy), (rw, rh), rang)).astype(np.int32) + np.array([self.roi_x_start, self.roi_y_start])
+                            best_dis = (zandi_y - rcy + self.roi_y_start) - rh / 2
 
-        if best_cnt is not None:
-            self.lost = 0
+                if best_cnt is not None:
+                    self.hurdle_lost = 0
 
-            # 전체화면 좌표
-            cx_hurdle = cx_best + self.roi_x_start
-            cy_hurdle = cy_best + self.roi_y_start
+                    # 정보 저장
+                    self.last_angle = best_angle
+                    self.last_dis = best_dis
+                    self.last_box = best_box
+        
+                    self.hurdle_color = (0, 255, 0)
+                    self.rect_color = (0, 255, 0)
+                    is_hurdle_valid = True
 
-            # 선 방향/법선 
-            theta = math.radians(angle_best)
-            dx, dy = math.cos(theta), math.sin(theta)
+                    cv2.drawContours(frame, [best_box], 0, self.hurdle_color, 2)
 
-            # 법선 거리
-            dis = abs((self.zandi_x - cx_hurdle) * -dy + (self.zandi_y - cy_hurdle) * dx)
+                    self.get_logger().info(f"[Hurdle] Near! | dis= {best_dis:.1f}, angle= {best_angle:.1f}")
 
-            # 허들 직선
-            x1l = int(cx_hurdle - self.image_width * dx); y1l = int(cy_hurdle - self.image_width * dy)
-            x2l = int(cx_hurdle + self.image_width * dx); y2l = int(cy_hurdle + self.image_width * dy)
-            cv2.line(frame, (x1l, y1l), (x2l, y2l), (0, 255, 255), 2)
+                else:
+                    if self.hurdle_lost < 3 and self.last_box is not None:
+                        self.hurdle_lost += 1
 
-            # 정보 저장
-            self.last_cx = cx_best
-            self.last_cy = cy_best
-            self.last_w  = w_best
-            self.last_h  = h_best
-            self.last_angle = angle_best
-            self.last_dis = dis
+                        # 정보 저장
+                        best_angle = self.last_angle
+                        best_dis = self.last_dis
+                        best_box = self.last_box
+            
+                        self.hurdle_color = (255, 0, 0)
+                        self.rect_color = (255, 0, 0)
+                        is_hurdle_valid = True
 
-            self.hurdle_color = (0, 255, 0)
-            self.rect_color = (0, 255, 0)
-            self.last_position_text = f"Dist: {dis:.2f}px | Pos: {cx_hurdle - self.zandi_x}, {-(cy_hurdle - self.zandi_y)}, | Ang: {angle_best - 90:.2f}"
+                        cv2.drawContours(frame, [best_box], 0, self.hurdle_color, 2)
 
-        elif self.lost < 10 and self.last_cx is not None:
-            self.lost += 1
-            # 정보 불러오기
-            cx_hurdle = self.last_cx + self.roi_x_start
-            cy_hurdle = self.last_cy + self.roi_y_start
-            w_best = self.last_w
-            h_best = self.last_h
-            angle_best = self.last_angle
-            dis = self.last_dis
+                        self.get_logger().info(f"[Hurdle] Lost but near! | dis= {best_dis:.1f}, angle= {best_angle:.1f}")
 
-            self.hurdle_color = (255, 0, 0)
-            self.rect_color = (255, 0, 0)
-            self.last_position_text = f"Dist: {dis:.2f}px | Pos: {cx_hurdle - self.zandi_x}, {-(cy_hurdle - self.zandi_y)}, | Ang: {angle_best - 90:.2f}"
-        else:
-            self.lost = 10
-            cx_hurdle = cy_hurdle = None
-            self.rect_color = (255, 255, 255)
-            self.last_position_text = 'Miss'
+                    else:
+                        self.hurdle_lost = 3
 
-        # 퍼블리시
-        if cx_hurdle is not None:
-            msg = PointStamped()
-            msg.header = color_msg.header
-            msg.point.x, msg.point.y, msg.point.z = float(cx_hurdle - self.zandi_x), float(cy_hurdle - self.zandi_y), angle_best - 90.0  
-            self.pub_hurdle.publish(msg)
+                        best_angle = best_dis = best_box = None
+                        self.last_angle = self.last_dis = self.last_box = None                 
 
-            # 박스 그리기
-            box = cv2.boxPoints(((self.last_cx, self.last_cy), (self.last_w, self.last_h), angle_best)).astype(np.int32)
-            box[:, 0] += self.roi_x_start
-            box[:, 1] += self.roi_y_start
-            cv2.drawContours(frame, [box], 0, self.hurdle_color, 2)
-            cv2.circle(frame, (cx_hurdle, cy_hurdle), 4, (0, 0, 255), -1)
+                        self.rect_color = (0, 0, 255)
+                        is_hurdle_valid = False
+                        
+                        self.get_logger().info(f"[Hurdle] Miss!")
+                            
+            else: 
+                for cnt in contours:
+                    area = cv2.contourArea(cnt)
+                    if area > 500:   # 1. 너무 작은 건 제외
+                        (rcx, rcy), (rw, rh), rang = cv2.minAreaRect(cnt) # 외접 사각형 그리고
+                        rang *= -1  # minAreaRect는 짧은 변과 x축 기준이고 0 ~ -90 / 우린 긴 변과 y축 기준에 0 ~ 90이 필요함  << 외접사각형기준
+                        if rw < rh:
+                            rw, rh = rh, rw # 난 h가 짧아야 한다
+                        aspect = rw / rh
+                        if aspect > 5.0:     # 2. 가로세로 비율            
+                            rect_area = rw * rh
+                            fill_ratio = area / rect_area
+                            if 0.5 <= fill_ratio:  # 3. 면적 비율                               
+                                if rw > best_w_hurdle: # 4. 그 중에서 가로가 제일 긴 박스
+                                    vx, vy, x0, y0 = cv2.fitLine(cnt, cv2.DIST_L2, 0, 0.01, 0.01)
+                                    vx = float(vx); vy = float(vy); x0 = float(x0); y0 = float(y0)
+                                    ang = -math.degrees(math.atan2(-vy, vx))
+                                    if ang >= 90:
+                                        ang -= 180  # <<< 컨투어 기준
+                                    
+                                    best_cnt = cnt
+                                    best_cy_hurdle = int(rcy + self.roi_y_start)
+                                    best_w_hurdle = int(rw)
+                                    best_h_hurdle = float(rh)
+                                    best_angle = float(ang)
+                                    best_vx, best_vy, best_y0 = vx, vy, y0
 
-        # 화면 출력
-        cv2.rectangle(frame, (self.roi_x_start, self.roi_y_start), (self.roi_x_end, self.roi_y_end), self.rect_color, 1)
-        cv2.circle(frame, (self.zandi_x, self.zandi_y), 5, (255, 255, 255), -1)
-        cv2.putText(frame, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, self.last_position_text, (self.roi_x_start - 175, self.roi_y_end + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 30), 2)
+                if best_cnt is not None:
+                    self.hurdle_lost = 0
 
-        cv2.imshow('LAB Mask', mask_ab)
-        cv2.imshow('Depth Mask', mask)
-        cv2.imshow('Hurdle Detection', frame)
-        cv2.waitKey(1)
+                    # 법선 
+                    cos_ang, sin_ang = math.cos(math.radians(best_angle)), math.sin(math.radians(best_angle))
+                    best_dis = (zandi_y - best_cy_hurdle) * cos_ang - best_h_hurdle / 2
 
-        # FPS
+                    # 허들 직선
+                    left_y = int(round((self.roi_x_start - x0) * best_vy / (best_vx + 0.00001) + best_y0 + self.roi_y_start))
+                    right_y = int(round((self.roi_x_end - x0) * best_vy / (best_vx + 0.00001) + best_y0 + self.roi_y_start))
+                    cv2.line(frame, (self.roi_x_start, left_y), (self.roi_x_end, right_y), self.hurdle_color, 2)
+                    cv2.line(frame, (zandi_x, zandi_y), (int(round(zandi_x - sin_ang * best_dis)), int(round(zandi_y - cos_ang * best_dis))), (0, 0, 255), 2)
+
+                    # 정보 저장
+                    self.last_cy_hurdle = best_cy_hurdle
+                    self.last_h = best_h_hurdle
+                    self.last_angle = best_angle
+                    self.last_left_y = left_y
+                    self.last_right_y = right_y
+                    self.last_dis = best_dis
+        
+                    self.hurdle_color = (0, 255, 0)
+                    self.rect_color = (0, 255, 0)
+                    is_hurdle_valid = True
+
+                    self.get_logger().info(f"[Hurdle] Found! | dis= {best_dis:.1f}, angle= {best_angle:.1f}, cy= {best_cy_hurdle}, h= {best_h_hurdle:.1f}")
+
+                else:
+                    if self.hurdle_lost < 3 and self.last_cy_hurdle is not None:
+                        self.hurdle_lost += 1
+                
+                        best_cy_hurdle = self.last_cy_hurdle
+                        best_h_hurdle = self.last_h
+                        best_angle = self.last_angle
+                        left_y = self.last_left_y
+                        right_y = self.last_right_y
+                        best_dis = self.last_dis
+
+                        cv2.line(frame, (self.roi_x_start, left_y), (self.roi_x_end, right_y), self.hurdle_color, 2)
+
+                        self.hurdle_color = (255, 0, 0)
+                        self.rect_color = (255, 0, 0)
+                        is_hurdle_valid = True
+                        
+                        self.get_logger().info(f"[Hurdle] Lost! | dis= {best_dis:.1f}, angle= {best_angle:.1f}, cy= {best_cy_hurdle}, h= {best_h_hurdle:.1f}")
+
+                    else:
+                        self.hurdle_lost = 3
+
+                        best_cy_hurdle = best_h_hurdle = best_angle = best_dis = None
+                        left_y = right_y = None
+                        self.last_cy_hurdle = self.last_h = self.last_angle = self.last_dis = None
+                        self.last_left_y = self.last_right_y = None                    
+
+                        self.rect_color = (0, 0, 255)
+                        is_hurdle_valid = False
+                        
+                        self.get_logger().info(f"[Hurdle] Miss!")
+
+            self.frames_left -= 1
+            self.hurdle_valid_list.append(is_hurdle_valid)
+            self.hurdle_angle_list.append(best_angle)
+            self.hurdle_dis_list.append(best_dis)
+
+            if self.frames_left <= 0:
+                result = Counter(self.hurdle_valid_list).most_common(1)[0][0]
+                process_time = (time.time() - self.line_start_time) / self.collecting_frames if self.line_start_time is not None else 0.0
+
+                if self.hurdle_near_by: # 허들 가까이 온 상태라면
+                    if result == True: # 허들을 봤다면
+                        angles = [a for s, a in zip(self.hurdle_valid_list, self.hurdle_angle_list) if s == result and a is not None]
+                        distances = [a for s, a in zip(self.hurdle_valid_list, self.hurdle_dis_list) if s == result and a is not None]
+                        avg_angle = np.mean(angles)
+                        avg_dis = int(round(np.mean(distances)))
+
+                        if avg_dis < 10: # 박치기 임계값
+                            res = 33 # 허들 넘어라 
+                            self.hurdle_near_by = False
+                            self.hurdle_saw_once = False
+                            self.hurdle_never_seen = True
+                            self.get_logger().info(f"[Hurdle] GOGOGOGO | angle= {avg_angle}, dis= {avg_dis}")
+                            
+                            self.set_roi(self.hurdle_near_by)
+                        else:
+                            res = 44 # 거의 제자리 걸음으로 접근
+                            self.get_logger().info(f"[Hurdle] Parking,,, | angle= {avg_angle}, dis= {avg_dis}")
+
+                    else: # 허들을 못 봐도
+                        res = 44 # 일단 걸어봐
+                        avg_angle = 0
+                        self.get_logger().info(f"[Hurdle] Parking,,,")
+
+                else:
+                    if result == True: # 허들을 봤다면
+                        self.hurdle_miss_count = 0
+
+                        if self.hurdle_never_seen: # 여긴 그냥 지금껏 허들을 본 적 있는지 없는지 저장용
+                            self.hurdle_saw_once = True
+                            self.hurdle_never_seen = False
+
+                        angles = [a for s, a in zip(self.hurdle_valid_list, self.hurdle_angle_list) if s == result and a is not None]
+                        distances = [a for s, a in zip(self.hurdle_valid_list, self.hurdle_dis_list) if s == result and a is not None]
+                        avg_angle = np.mean(angles)
+                        avg_dis = int(round(np.mean(distances)))
+
+                        dis_min = avg_dis - zandi_half_width * math.cos(math.radians(avg_angle))
+
+                        if dis_min >= 250: # 1구간
+                            if avg_angle >= 15:
+                                res = 3
+                            elif avg_angle <= -15:
+                                res = 2
+                            else:
+                                res = 12
+                            self.get_logger().info(f"[Hurdle] Approaching 1 | angle= {avg_angle}, dis= {avg_dis}")
+
+                        elif dis_min >= 100: # 2구간
+                            if avg_angle >= 8:
+                                res = 3
+                            elif avg_angle <= -8:
+                                res = 2
+                            else:
+                                res = 12
+                            self.get_logger().info(f"[Hurdle] Approaching 2 | angle= {avg_angle}, dis= {avg_dis}")
+
+                        else: # 너 좀 가깝다
+                            self.hurdle_near_by = True
+                            self.set_roi(self.hurdle_near_by)
+
+                            if avg_angle >= 8:
+                                res = 3
+                            elif avg_angle <= -8:
+                                res = 2
+                            else:
+                                res = 12
+                            self.get_logger().info(f"[Hurdle] Near by! | angle= {avg_angle}, dis= {avg_dis}")
+
+                    else: # 허들을 못 봤다면
+                        avg_angle = 0
+                        if self.hurdle_saw_once: # 허들 한 번이라도 봤으면 무조건 있는 거임 ㅇㅇ~
+                            self.hurdle_miss_count += 1
+                            if self.hurdle_miss_count >= 2:
+                                res = 44 # 색공간 넓히거나, 조건 수정 필요
+                                self.get_logger().info(f"[Hurdle] Totally lost,,,")
+                            else: 
+                                res = 12
+                                self.get_logger().info(f"[Hurdle] Trying to find,,,")
+                        else:
+                            res = 99 # 평소
+                            self.get_logger().info(f"[Hurdle] No hurdle")
+                    
+                angle = int(round(avg_angle)) 
+                # 퍼블리시
+                msg_out = HurdleResult()
+                msg_out.res = res
+                msg_out.angle = abs(angle)
+                self.hurdle_result_pub.publish(msg_out)
+
+                self.get_logger().info(f"res= {res}")
+                self.get_logger().info(f"frames= {len(self.hurdle_valid_list)}, wall= {process_time*1000:.1f} ms")
+
+                # 리셋
+                self.collecting = False
+                self.frames_left = 0
+                self.frame_idx = 0
+            
+        cv2.rectangle(frame, (self.roi_x_start + 1, self.roi_y_start + 1), (self.roi_x_end - 1, self.roi_y_end - 1), self.rect_color, 1)
+        cv2.circle(frame, (zandi_x, zandi_y), 5, (255, 0, 255), -1)
+        cv2.line(frame, (zandi_x - zandi_half_width, zandi_y), (zandi_x + zandi_half_width, zandi_y), (255, 0, 255), 2)
+
+        # 딜레이 측정
         elapsed = time.time() - start_time
         self.frame_count += 1
         self.total_time += elapsed
         now = time.time()
         if now - self.last_report_time >= 1.0:
-            avg_time = self.total_time / max(1, self.frame_count)
+            avg_time = self.total_time / self.frame_count
             fps = self.frame_count / (now - self.last_report_time)
             self.last_avg_text = f'AVG: {avg_time*1000:.2f} ms | FPS: {fps:.2f}'
             self.frame_count = 0
             self.total_time = 0.0
             self.last_report_time = now
+
+        cv2.putText(frame, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, self.last_position_text, (10, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (230, 230, 30), 2)
+
+        if self.collecting:
+            cv2.imshow('LAB Mask', mask_ab)
+            cv2.imshow('Mask', mask)
+        cv2.imshow('Hurdle Detection', frame)
+        cv2.waitKey(1)
 
 def main():
     rp.init()
