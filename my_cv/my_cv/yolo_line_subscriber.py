@@ -94,7 +94,7 @@ class LineListenerNode(Node): ##################################################
         self.out_angle = 0
         self.last_mean_angle = 0
 
-        self.add_on_set_parameters_callback(self.parameter_callback)
+        self.add_on_set_parameters_callback(self.param_callback)
 
         # 퍼블리셔
         self.line_result_pub = self.create_publisher(LineResult, '/line_result', 10)
