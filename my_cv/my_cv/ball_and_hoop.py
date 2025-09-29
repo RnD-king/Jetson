@@ -133,11 +133,11 @@ class LineListenerNode(Node): ##################################################
         self.declare_parameter("cam_mode", CAM1)
         self.declare_parameter("cam1_mode", BALL)
 
-        self.declare_parameter("orange_h_low", 0) # 주황
+        self.declare_parameter("orange_h_low", 8) # 주황
         self.declare_parameter("orange_h_high", 60)  
         self.declare_parameter("orange_s_low", 40) # 채도  
         self.declare_parameter("orange_s_high", 255)  
-        self.declare_parameter("orange_v_low", 60) # 밝기
+        self.declare_parameter("orange_v_low", 50) # 밝기
         self.declare_parameter("orange_v_high", 255)
 
         # 파라미터 선언 H
@@ -987,6 +987,7 @@ class LineListenerNode(Node): ##################################################
         # 영상 받아오기
         frame = self.bridge.imgmsg_to_cv2(cam2_color_msg, desired_encoding='bgr8')
         roi_color = frame[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+        res = 5
 
 
         if not self.collecting:
