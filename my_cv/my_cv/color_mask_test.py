@@ -42,7 +42,7 @@ class ColorNode(Node):
         self.depth_min = self.get_parameter("depth_min").value
         self.depth_max = self.get_parameter("depth_max").value
 
-        self.add_on_set_parameters_callback(self.parameter_callback)
+        self.add_on_set_parameters_callback(self.param_callback)
 
         self.lower_hsv = np.array([self.h_low, self.s_low, self.v_low], dtype=np.uint8)
         self.upper_hsv = np.array([self.h_high, self.s_high, self.v_high], dtype=np.uint8)
