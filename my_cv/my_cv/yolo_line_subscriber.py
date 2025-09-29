@@ -50,6 +50,7 @@ class LineListenerNode(Node): ##################################################
 
         self.status_list = [] # 누적 값 저장
         self.angle_list = []
+        self.avg_x_list = []
 
         self.miss_count = 0
         self.out_count = 0
@@ -65,16 +66,16 @@ class LineListenerNode(Node): ##################################################
             self.motion_callback, 10)                         
         self.subscription_color = self.create_subscription(  # 이미지 토픽
             Image,
-            '/cam2/color/image_raw',  #  640x480 / 15fps
+            '/cam1/color/image_raw',  #  640x480 / 15fps cam2
             self.color_image_callback, 10)
         
         # 파라미터 선언
-        self.declare_parameter("delta_zandi_min", 100) # 핑크 선 두께
+        self.declare_parameter("delta_zandi_min", 190) # 핑크 선 두께
         self.declare_parameter("collecting_frames", 9) # 몇 프레임 동안 보고 판단할 거냐  << yolo는 15프레임, 정지 5프레임, 탐지는 10프레임만
         self.declare_parameter("delta_tip_min", 15) # 빨간 점이 얼마나 벗어나야 커브일까
         self.declare_parameter("vertical", 15) # 직진 판단 각도
         self.declare_parameter("horizontal", 75) # 수평 판단 각도  <<<  아직 안 만듬
-        self.declare_parameter("delta_out", 60) # out 복귀 판단 범위
+        self.declare_parameter("delta_out", 120) # out 복귀 판단 범위
 
         # 파라미터 적용
         self.delta_zandi_min = self.get_parameter("delta_zandi_min").value
@@ -93,6 +94,7 @@ class LineListenerNode(Node): ##################################################
         self.out_now = False
         self.out_angle = 0
         self.last_mean_angle = 0
+        self.last_avg_x = (roi_x_start + roi_x_end) / 2
 
         self.add_on_set_parameters_callback(self.param_callback)
 
@@ -129,6 +131,7 @@ class LineListenerNode(Node): ##################################################
             # 초기화
             self.status_list.clear()
             self.angle_list.clear()
+            self.avg_x_list.clear()
             self.frame_idx = 0
 
             self.line_start_time = time.time()
@@ -152,6 +155,7 @@ class LineListenerNode(Node): ##################################################
             line_x = np.array([c[0] for c in self.candidates[:-1]], dtype=np.float32) # 나머지 점
             line_y = np.array([c[1] for c in self.candidates[:-1]], dtype=np.float32)
             avg_line_x = int(round(np.mean(line_x)))
+            self.last_avg_x = avg_line_x
 
             if float(line_x.max() - line_x.min()) < 2.0: # 거의 일직선이면 (계산식 발산 방지)
                 x1 = x2 = avg_line_x
@@ -278,13 +282,13 @@ class LineListenerNode(Node): ##################################################
 
             down_x, down_y, down_lost = self.candidates[0]
             up_x, up_y, up_lost = self.candidates[1]
-            avg_x = int(round((down_x + up_x)/2))
+            avg_line_x = int(round((down_x + up_x)/2))
 
             if abs(down_x - up_x) < 2: # 일직선인 경우
                 line_angle = 0
-                x1 = x2 = avg_x
+                x1 = x2 = avg_line_x
                 y1, y2 = roi_y_end, roi_y_start
-                delta_zandi = abs(float(avg_x - zandi_x))
+                delta_zandi = abs(float(avg_line_x - zandi_x))
             else: # 일반적인 경우
                 m = (up_y - down_y) / (up_x - down_x)
                 b = down_y - m * down_x
@@ -319,7 +323,7 @@ class LineListenerNode(Node): ##################################################
                     self.tilt_text = "Spin Left"
 
             else: #분기 3-2 Out = RL  >> 복귀 모션 ㄱㄱ~
-                self.out_text = "Out Left" if (avg_x - zandi_x > 0) else "Out Right"
+                self.out_text = "Out Left" if (avg_line_x - zandi_x > 0) else "Out Right"
                 r = float(np.clip(delta_zandi / 320.0, -1.0, 1.0))
                 angle = math.degrees(math.asin(r))
 
@@ -349,6 +353,7 @@ class LineListenerNode(Node): ##################################################
             line_angle = 0
             delta_zandi = 0
             status = 5
+            avg_line_x = int(round((roi_x_start + roi_x_end) / 2))
 
             self.last_line_xy = None
         # =========================================================================================================
@@ -358,6 +363,7 @@ class LineListenerNode(Node): ##################################################
         self.frames_left -= 1
         self.status_list.append(status)
         self.angle_list.append(angle)
+        self.avg_x_list.append(avg_line_x)
 
         # 화면용 최신 값 저장
         self.last_angle = angle
@@ -372,6 +378,8 @@ class LineListenerNode(Node): ##################################################
             angles = [a for s, a in zip(self.status_list, self.angle_list) if s == res]
             mean_angle = int(round(np.mean(angles)))
             self.last_mean_angle = mean_angle
+            mean_avg_x = int(round(np.mean([a for s, a in zip(self.status_list, self.avg_x_list) if s == res]))) if res != 5 else self.last_avg_x # 계속 예전 값 유지
+            self.last_avg_x = mean_avg_x
 
             if self.out_now:
                 if res != 12: # 탈출 성공
@@ -386,7 +394,7 @@ class LineListenerNode(Node): ##################################################
                         res = 5
                         self.get_logger().info(f"[Line] Still out,, | res= {res}, angle_avg= {mean_angle}")
                     else:
-                        self.get_logger().info(f"[Line] Out! | res= {res}, angle_avg= {mean_angle}")
+                        self.get_logger().info(f"[Line] Recovering! | res= {res}, angle_avg= {mean_angle}, out_count= {self.out_count}")
             else: # 평소
                 if res in (12, 13, 14): # out이 되었다면
                     self.out_now = True
@@ -400,12 +408,25 @@ class LineListenerNode(Node): ##################################################
             else:
                 self.miss_count += 1
                 if self.miss_count >= 5:
-                    self.miss_count = 5
+                    self.miss_count = 5 
                     res = 5 # 5번 연속으로 점선을 못 찾는다면?
-                    self.get_logger().info(f"[Line] I totally missed,,, | res= {res}, miss count= {self.miss_count}")
+                    self.get_logger().info(f"[Line] I totally missed,,, | res= {res}, miss over {self.miss_count} times")
+                elif self.miss_count >= 2:
+                    if self.last_avg_x > (roi_x_start + roi_x_end) / 2 + self.delta_zandi_min:
+                        res = 3
+                        mean_angle = 45
+                        self.get_logger().info(f"[Line] Miss,, maybe right | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 오른쪽
+                    elif self.last_avg_x < (roi_x_start + roi_x_end) / 2 - self.delta_zandi_min:
+                        res = 2
+                        mean_angle = -45
+                        self.get_logger().info(f"[Line] Miss,, maybe left | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 왼쪽
+                    else:
+                        res = 5
+                        self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 그것도 아닌데 못 찾았으면 일단 뒤로가기
                 else:
-                    self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 못 찾았으면 일단 뒤로가기
-            
+                    res = 5
+                    self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 한 번 못 찾았으면 일단 뒤로가기
+
             process_time = (time.time() - self.line_start_time) / self.collecting_frames if self.line_start_time is not None else 0.0
 
             # 퍼블리시
@@ -430,6 +451,7 @@ class LineListenerNode(Node): ##################################################
         start_time = time.time()
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         roi = cv_image[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+        step_text = f"{self.frame_idx}/{self.collecting_frames}"
 
         if self.candidates is not None:
             # 후보 점 시각화 (최근 candidates 기준)
@@ -449,9 +471,6 @@ class LineListenerNode(Node): ##################################################
                 cv2.line(roi, (int(x1 - roi_x_start), int(y1 - roi_y_start)),
                             (int(x2 - roi_x_start), int(y2 - roi_y_start)), (255, 0, 0), 2)
 
-            step_text = f"{self.frame_idx}/{self.collecting_frames}"
-            cv2.putText(cv_image, f"Step: {step_text}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
-        else:
             cv2.putText(cv_image, f"Step: {step_text}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
 
         # HUD 텍스트 (마지막 계산 결과)
@@ -462,7 +481,7 @@ class LineListenerNode(Node): ##################################################
 
         # ROI/잔디 기준 시각화
         cv_image[roi_y_start:roi_y_end, roi_x_start:roi_x_end] = roi
-        cv2.rectangle(cv_image, (roi_x_start - 1, roi_y_start - 1), (roi_x_end + 1, roi_y_end), (0, 255, 0), 1)
+        cv2.rectangle(cv_image, (roi_x_start + 1, roi_y_start + 1), (roi_x_end - 1, roi_y_end - 1), (0, 255, 0), 1)
         cv2.circle(cv_image, (zandi_x, zandi_y), 5, (111,255,111), -1)
         cv2.circle(cv_image, (zandi_x, zandi_y), self.delta_zandi_min, (255,22,255), 1)
         cv2.circle(cv_image, (zandi_x, zandi_y), self.delta_out, (255,22, 22), 1)
