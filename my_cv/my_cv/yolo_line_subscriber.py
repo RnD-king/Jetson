@@ -16,8 +16,8 @@ camera_height = 480
 
 roi_x_start = int(camera_width * 0 // 5)
 roi_x_end = int(camera_width * 5 // 5)
-roi_y_start = int(camera_height * 1 // 12)
-roi_y_end = int(camera_height * 11 // 12)
+roi_y_start = int(camera_height * 0 // 12)
+roi_y_end = int(camera_height * 12 // 12)
 
 zandi_x = int((roi_x_start + roi_x_end) / 2)
 zandi_y = int((roi_y_start + roi_y_end) / 2) + 140
@@ -42,15 +42,15 @@ class LineListenerNode(Node): ##################################################
         self.frame_idx = 0      
         self.frames_left = 0       # 남은 프레임 수 < collecting_frames
         
-        self.last_angle = 0
-        self.last_line_angle = 0.0
-        self.last_delta_zandi = 0.0
-        self.last_status = 0
+        # self.last_angle = 0
+        # self.last_line_angle = 0.0
+        # self.last_delta_zandi = 0.0
+        # self.last_status = 0
         self.last_line_xy = None    
 
         self.status_list = [] # 누적 값 저장
         self.angle_list = []
-        self.avg_x_list = []
+        # self.avg_x_list = []
 
         self.miss_count = 0
         self.out_count = 0
@@ -70,12 +70,12 @@ class LineListenerNode(Node): ##################################################
             self.color_image_callback, 10)
         
         # 파라미터 선언
-        self.declare_parameter("delta_zandi_min", 190) # 핑크 선 두께
+        self.declare_parameter("delta_zandi_min", 140) # 핑크 선 두께
         self.declare_parameter("collecting_frames", 9) # 몇 프레임 동안 보고 판단할 거냐  << yolo는 15프레임, 정지 5프레임, 탐지는 10프레임만
         self.declare_parameter("delta_tip_min", 15) # 빨간 점이 얼마나 벗어나야 커브일까
         self.declare_parameter("vertical", 15) # 직진 판단 각도
         self.declare_parameter("horizontal", 75) # 수평 판단 각도  <<<  아직 안 만듬
-        self.declare_parameter("delta_out", 120) # out 복귀 판단 범위
+        self.declare_parameter("delta_out", 90) # out 복귀 판단 범위
 
         # 파라미터 적용
         self.delta_zandi_min = self.get_parameter("delta_zandi_min").value
@@ -86,15 +86,14 @@ class LineListenerNode(Node): ##################################################
         self.delta_out = self.get_parameter("delta_out").value
         
         self.candidates = [] 
-        self.curve_count = 0
+        
         self.tilt_text = "" # 화면 출력
         self.curve_text = "" # 화면 출력
         self.out_text = "" # 화면 출력
 
         self.out_now = False
-        self.out_angle = 0
-        self.last_mean_angle = 0
-        self.last_avg_x = (roi_x_start + roi_x_end) / 2
+        self.last_mean_angle = 0 # 시각화
+        # self.last_avg_x = (roi_x_start + roi_x_end) / 2
 
         self.add_on_set_parameters_callback(self.param_callback)
 
@@ -131,7 +130,7 @@ class LineListenerNode(Node): ##################################################
             # 초기화
             self.status_list.clear()
             self.angle_list.clear()
-            self.avg_x_list.clear()
+            # self.avg_x_list.clear()
             self.frame_idx = 0
 
             self.line_start_time = time.time()
@@ -145,21 +144,24 @@ class LineListenerNode(Node): ##################################################
         for idx, (cx, cy, lost) in enumerate(self.candidates):
             self.get_logger().info(f'[{idx}] cx={cx}, cy={cy}, lost={lost}')
 
-        line_angle = 0.0 # 직선 각도
+        line_angle = 0.0 # 라인 직선의 각도
         angle = 0.0 # 잔디가 회전할 최종 각도
-        delta_zandi = 0
-        status = 0
+        delta_zandi = 0 # 라인 직선하고 잔디 중심 사이 거리
+        status = 99 # == res
 
         if len(self.candidates) >= 3:  # =================================================== I. 세 점 이상 탐지
             tip_x, tip_y, tip_lost = self.candidates[-1] # 맨 위의 점
             line_x = np.array([c[0] for c in self.candidates[:-1]], dtype=np.float32) # 나머지 점
             line_y = np.array([c[1] for c in self.candidates[:-1]], dtype=np.float32)
             avg_line_x = int(round(np.mean(line_x)))
-            self.last_avg_x = avg_line_x
+            # self.last_avg_x = avg_line_x
 
-            if float(line_x.max() - line_x.min()) < 2.0: # 거의 일직선이면 (계산식 발산 방지)
-                x1 = x2 = avg_line_x
-                y1 = roi_y_end; y2 = roi_y_start
+            if float(line_x.max() - line_x.min()) < 5.0: # 거의 일직선이면 (계산식 발산 방지)
+                
+                x1 = x2 = avg_line_x # 시각화
+                y1 = roi_y_end
+                y2 = roi_y_start
+
                 line_angle = 0 # tilt
                 delta_tip = float(avg_line_x - tip_x) # 1. curve
                 delta_zandi = float(avg_line_x - zandi_x) # 3. out
@@ -167,8 +169,7 @@ class LineListenerNode(Node): ##################################################
                 pts = np.stack([line_x, line_y], axis=1)
                 vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
                 vx = float(vx); vy = float(vy); x0 = float(x0); y0 = float(y0)
-                m = vy / vx
-
+                
                 line_angle = math.degrees(math.atan2(vx, -vy))
                 if line_angle >= 90:
                     line_angle -= 180
@@ -178,7 +179,9 @@ class LineListenerNode(Node): ##################################################
                 delta_tip = signed_tip / (math.hypot(vx, vy) + 1e-5)
                 delta_zandi = signed_zandi / (math.hypot(vx, vy) + 1e-5)
                 delta_zandi = delta_zandi * abs(line_angle) / line_angle 
-
+                
+                # 시각화
+                m = vy / vx
                 b = y0 - m * x0
                 if abs(m) > 1:
                     y1, y2 = roi_y_end, roi_y_start
@@ -204,9 +207,13 @@ class LineListenerNode(Node): ##################################################
                         angle = line_angle
                         status = 2
                         self.tilt_text = "Spin Left"
+                    else:
+                        angle = line_angle # 라인이 수평으로 보일 때 << 나중에 다시
+                        status = 98  # 나중에 다시~
+                        self.tilt_text = "98"
                 else:
                     angle = 0
-                    status = 12  # 탈출 실패 
+                    status = 27  # 탈출 실패 
                     self.out_text = "Still Out"
 
             else: # 평소
@@ -214,12 +221,15 @@ class LineListenerNode(Node): ##################################################
                     angle = math.degrees(math.atan2(tip_x - zandi_x, -(tip_y - zandi_y)))
                     if angle >= 90:
                         angle -= 180
+
                     if abs(angle) <= self.vertical: 
                         status = 1
-                    elif angle > self.vertical: 
+                    elif self.horizontal > angle > self.vertical: 
                         status = 3
-                    elif angle < -self.vertical:
+                    elif -self.horizontal < angle < -self.vertical:
                         status = 2
+                    else:
+                        status = 98
 
                     self.curve_text = "Turn Left" if (delta_tip * line_angle > 0) else "Turn Right"
 
@@ -231,6 +241,8 @@ class LineListenerNode(Node): ##################################################
                             self.tilt_text = "Spin Right"
                         elif -self.horizontal < line_angle < -self.vertical:
                             self.tilt_text = "Spin Left"
+                        else: 
+                            self.tilt_text = "98"
                     else: # 분기 3-2 Out = RL
                         self.out_text = "Out Left" if (delta_zandi > 0) else "Out Right"
                         if abs(line_angle) < self.vertical:
@@ -239,6 +251,8 @@ class LineListenerNode(Node): ##################################################
                             self.tilt_text = "Spin Right"
                         elif -self.horizontal < line_angle < -self.vertical:
                             self.tilt_text = "Spin Left"
+                        else: 
+                            self.tilt_text = "98"
                 else: # 분기 1-2 Turn = Straight
                     self.curve_text = "Straight"
                     if abs(delta_zandi) < self.delta_zandi_min: # 분기 3-1 Out = In
@@ -255,6 +269,10 @@ class LineListenerNode(Node): ##################################################
                             angle = line_angle
                             status = 2
                             self.tilt_text = "Spin Left"
+                        else:
+                            angle = line_angle
+                            status = 98
+                            self.tilt_text = "98"
                     else: # 분기 3-2 Out = RL >> 복귀 모션 ㄱㄱ  >>>> 여기 위에랑 뭐가 다르냐
                         self.out_text = "Out Left" if (delta_zandi > 0) else "Out Right"
 
@@ -267,13 +285,17 @@ class LineListenerNode(Node): ##################################################
                             self.tilt_text = "Spin Right"
                         elif -self.horizontal < line_angle < -self.vertical:
                             self.tilt_text = "Spin Left"
+                        else:
+                            self.tilt_text = "98"
 
                         if abs(angle) < self.vertical:
-                            status = 12 # 한 발자국
+                            status = 27 # 한 발자국
                         elif self.horizontal > angle > self.vertical:
-                            status = 14 # 우회전 후 한 발자국
+                            status = 3 # 우회전
                         elif -self.horizontal < angle < -self.vertical:
-                            status = 13 # 좌회전 후 한 발자국
+                            status = 2 # 좌회전 
+                        else:
+                            status = 98
 
             self.last_line_xy = (int(x1), int(y1), int(x2), int(y2)) # 시각화
 
@@ -284,14 +306,14 @@ class LineListenerNode(Node): ##################################################
             up_x, up_y, up_lost = self.candidates[1]
             avg_line_x = int(round((down_x + up_x)/2))
 
-            if abs(down_x - up_x) < 2: # 일직선인 경우
+            if abs(down_x - up_x) < 5: # 일직선인 경우
                 line_angle = 0
-                x1 = x2 = avg_line_x
+
+                x1 = x2 = avg_line_x # 시각화
                 y1, y2 = roi_y_end, roi_y_start
+
                 delta_zandi = abs(float(avg_line_x - zandi_x))
             else: # 일반적인 경우
-                m = (up_y - down_y) / (up_x - down_x)
-                b = down_y - m * down_x
                 line_angle = math.degrees(math.atan2(up_x - down_x, up_y - down_y))
 
                 if line_angle > 90:
@@ -299,6 +321,9 @@ class LineListenerNode(Node): ##################################################
                 signed_zandi = (zandi_x - down_x)*(up_y - down_y) - (zandi_y - down_y)*(up_x - down_x)
                 delta_zandi = abs(signed_zandi / (math.hypot(up_x - down_x, up_y - down_y) + 1e-5))
                 
+                # 시각화
+                m = (up_y - down_y) / (up_x - down_x)
+                b = down_y - m * down_x
                 if abs(m) > 1:
                     y1, y2 = roi_y_end, roi_y_start
                     x1 = int((y1 - b)/m); x2 = int((y2 - b)/m)
@@ -306,43 +331,76 @@ class LineListenerNode(Node): ##################################################
                     x1, x2 = roi_x_end, roi_x_start
                     y1 = int(m*x1 + b); y2 = int(m*x2 + b)
 
-            if delta_zandi < self.delta_zandi_min: # 분기 3-1 Out = In
-                self.out_text = "In"
-
-                if abs(line_angle) <= self.vertical: # 분기 2 Tilt
+            if self.out_now: # 한 번 나간 상태
+                if abs(delta_zandi) <= self.delta_out: # 탈출 성공
+                    if abs(line_angle) < self.vertical:
+                        angle = 0
+                        status = 1
+                        self.tilt_text = "Straight"
+                    elif self.horizontal > line_angle > self.vertical:
+                        angle = line_angle
+                        status = 3
+                        self.tilt_text = "Spin Right"
+                    elif -self.horizontal < line_angle < -self.vertical:
+                        angle = line_angle
+                        status = 2
+                        self.tilt_text = "Spin Left"
+                    else:
+                        angle = line_angle # 라인이 수평으로 보일 때 << 나중에 다시
+                        status = 98  # 제자리에서 다시 보기
+                        self.tilt_text = "98"
+                else:
                     angle = 0
-                    status = 1
-                    self.tilt_text = "Straight"
-                elif self.horizontal > line_angle > self.vertical:
-                    angle = line_angle
-                    status = 3
-                    self.tilt_text = "Spin Right"
-                elif -self.horizontal < line_angle < -self.vertical:
-                    angle = line_angle
-                    status = 2
-                    self.tilt_text = "Spin Left"
+                    status = 27  # 탈출 실패 
+                    self.out_text = "Still Out"
+            
+            else:
+                if delta_zandi < self.delta_zandi_min: # 분기 3-1 Out = In
+                    self.out_text = "In"
 
-            else: #분기 3-2 Out = RL  >> 복귀 모션 ㄱㄱ~
-                self.out_text = "Out Left" if (avg_line_x - zandi_x > 0) else "Out Right"
-                r = float(np.clip(delta_zandi / 320.0, -1.0, 1.0))
-                angle = math.degrees(math.asin(r))
+                    if abs(line_angle) <= self.vertical: # 분기 2 Tilt
+                        angle = 0
+                        status = 1
+                        self.tilt_text = "Straight"
+                    elif self.horizontal > line_angle > self.vertical:
+                        angle = line_angle
+                        status = 3
+                        self.tilt_text = "Spin Right"
+                    elif -self.horizontal < line_angle < -self.vertical:
+                        angle = line_angle
+                        status = 2
+                        self.tilt_text = "Spin Left"
+                    else:
+                        angle = line_angle
+                        status = 98
+                        self.tilt_text = "98"
 
-                if abs(line_angle) <= self.vertical: # 분기 2 Tilt
-                    self.tilt_text = "Straight"
-                elif self.horizontal > line_angle > self.vertical:
-                    self.tilt_text = "Spin Right"
-                elif -self.horizontal < line_angle < -self.vertical:
-                    self.tilt_text = "Spin Left"
-                angle += line_angle
+                else: #분기 3-2 Out = RL  >> 복귀 모션 ㄱㄱ~
+                    self.out_text = "Out Left" if (avg_line_x - zandi_x > 0) else "Out Right"
+                    r = float(np.clip(delta_zandi / 320.0, -1.0, 1.0))
+                    angle = math.degrees(math.asin(r))
 
-                if abs(angle) <= self.vertical: 
-                    status = 12 # 한 발자국
-                elif self.horizontal > angle > self.vertical: 
-                    status = 14 # 우회전 후 ㅎ ㅂㅈㄱ
-                elif -self.horizontal < angle < -self.vertical:
-                    status = 13 # 좌회전 후 ㅎ ㅂㅈㄱ
+                    if abs(line_angle) <= self.vertical: # 분기 2 Tilt
+                        self.tilt_text = "Straight"
+                    elif self.horizontal > line_angle > self.vertical:
+                        self.tilt_text = "Spin Right"
+                    elif -self.horizontal < line_angle < -self.vertical:
+                        self.tilt_text = "Spin Left"
+                    else: 
+                        self.tilt_text = "98"
 
-            self.last_line_xy = (int(x1), int(y1), int(x2), int(y2))
+                    angle += line_angle
+
+                    if abs(angle) <= self.vertical: 
+                        status = 27 # 한 발자국
+                    elif self.horizontal > angle > self.vertical: 
+                        status = 3 # 우회전
+                    elif -self.horizontal < angle < -self.vertical:
+                        status = 2 # 좌회전
+                    else: 
+                        status = 98
+
+            self.last_line_xy = (int(x1), int(y1), int(x2), int(y2))  # 시각화
 
         else:  # ======================================================================================= III. 1점 이하 탐지
             self.curve_text = "Miss"
@@ -352,80 +410,91 @@ class LineListenerNode(Node): ##################################################
             angle = 0
             line_angle = 0
             delta_zandi = 0
-            status = 5
-            avg_line_x = int(round((roi_x_start + roi_x_end) / 2))
+            status = 99 # 탐지 못 하면 99
+            # avg_line_x = int(round((roi_x_start + roi_x_end) / 2))
 
-            self.last_line_xy = None
+            self.last_line_xy = None # 시각화
         # =========================================================================================================
 
-        # 결과 누적/업데이트
+        # 결과 업데이트
         angle = int(round(angle))
         self.frames_left -= 1
         self.status_list.append(status)
         self.angle_list.append(angle)
-        self.avg_x_list.append(avg_line_x)
+        # self.avg_x_list.append(avg_line_x)
 
         # 화면용 최신 값 저장
-        self.last_angle = angle
-        self.last_line_angle = int(round(line_angle))
-        self.last_delta_zandi = float(round(delta_zandi,1))
-        self.last_status = status
+        # self.last_angle = angle
+        # self.last_line_angle = int(round(line_angle))
+        # self.last_delta_zandi = float(round(delta_zandi,1))
+        # self.last_status = status
 
         # 15프레임 다 끝나면
         if self.frames_left <= 0:
-            cnt = Counter(self.status_list)
-            res = max(cnt.items(), key=lambda kv: kv[1])[0]
+            status_cnt = Counter(self.status_list)
+            max_cnt = max(status_cnt.values())
+            status_candi = [s for s, c in status_cnt.items() if c == max_cnt]
+            res = None
+            for s in reversed(self.status_list):
+                if s in status_candi:
+                    res = s
+                    break
             angles = [a for s, a in zip(self.status_list, self.angle_list) if s == res]
-            mean_angle = int(round(np.mean(angles)))
-            self.last_mean_angle = mean_angle
-            mean_avg_x = int(round(np.mean([a for s, a in zip(self.status_list, self.avg_x_list) if s == res]))) if res != 5 else self.last_avg_x # 계속 예전 값 유지
-            self.last_avg_x = mean_avg_x
+            mean_angle = int(round(np.mean(angles))) if angles else 0
+
+            self.last_mean_angle = mean_angle # 시각화
+            # mean_avg_x = int(round(np.mean([a for s, a in zip(self.status_list, self.avg_x_list) if s == res]))) if res != 5 else self.last_avg_x # 계속 예전 값 유지
+            # self.last_avg_x = mean_avg_x
 
             if self.out_now:
-                if res != 12: # 탈출 성공
+                if res != 27: # 탈출 성공
                     self.out_now = False
                     self.out_count = 0
                     self.get_logger().info(f"[Line] In! | res= {res}, angle_avg= {mean_angle}")
                 else: # 탈출 실패
                     self.out_count += 1
-                    if self.out_count >= 5: # 5연속 탈출 못 했으면 때려쳐라
-                        self.out_now = False    
+                    if self.out_count >= 4: # 4연속 탈출 못 했으면 때려쳐라
+                        self.out_now = False  # 다 초기화 하고 화면 다시 보기
                         self.out_count = 0
-                        res = 5
+                        res = 99 # 점선 탐지 못 한 셈 쳐
                         self.get_logger().info(f"[Line] Still out,, | res= {res}, angle_avg= {mean_angle}")
                     else:
                         self.get_logger().info(f"[Line] Recovering! | res= {res}, angle_avg= {mean_angle}, out_count= {self.out_count}")
             else: # 평소
-                if res in (12, 13, 14): # out이 되었다면
+                if res == 27: # 방금 막 out이 되었다면
                     self.out_now = True
                     self.out_count += 1
                     self.get_logger().info(f"[Line] Out! | res= {res}, angle_avg= {mean_angle}")
 
-            if res != 5:
-                self.miss_count = 0
-                self.get_logger().info(f"[Line] Found | res= {res}, angle_avg= {mean_angle}, line_angle= {self.last_line_angle}, " # line_angle은 임시
-                                    f"delta= {self.last_delta_zandi}")
-            else:
-                self.miss_count += 1
-                if self.miss_count >= 5:
-                    self.miss_count = 5 
-                    res = 5 # 5번 연속으로 점선을 못 찾는다면?
-                    self.get_logger().info(f"[Line] I totally missed,,, | res= {res}, miss over {self.miss_count} times")
-                elif self.miss_count >= 2:
-                    if self.last_avg_x > (roi_x_start + roi_x_end) / 2 + self.delta_zandi_min:
-                        res = 3
-                        mean_angle = 45
-                        self.get_logger().info(f"[Line] Miss,, maybe right | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 오른쪽
-                    elif self.last_avg_x < (roi_x_start + roi_x_end) / 2 - self.delta_zandi_min:
-                        res = 2
-                        mean_angle = -45
-                        self.get_logger().info(f"[Line] Miss,, maybe left | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 왼쪽
-                    else:
-                        res = 5
-                        self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 그것도 아닌데 못 찾았으면 일단 뒤로가기
-                else:
-                    res = 5
-                    self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 한 번 못 찾았으면 일단 뒤로가기
+            # 몇 번 연속 라인 탐지 못 했을 때 코든데, 이건 decision에서 << ball이랑 겹칠 수도 있어서
+            # if res != 99:  
+            #     self.miss_count = 0
+            #     self.get_logger().info(f"[Line] Found | res= {res}, angle_avg= {mean_angle}, line_angle= {self.last_line_angle}, " # line_angle은 임시
+            #                         f"delta= {self.last_delta_zandi}")
+            # else:
+            #     self.miss_count += 1
+            #     if self.miss_count >= 5:
+            #         self.miss_count = 5 
+            #         res = 5 # 5번 연속으로 점선을 못 찾는다면?
+            #         self.get_logger().info(f"[Line] I totally missed,,, | res= {res}, miss over {self.miss_count} times")
+            #     elif self.miss_count >= 2:
+            #         if self.last_avg_x > (roi_x_start + roi_x_end) / 2 + self.delta_zandi_min:
+            #             res = 3
+            #             mean_angle = 45
+            #             self.get_logger().info(f"[Line] Miss,, maybe right | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 오른쪽
+            #         elif self.last_avg_x < (roi_x_start + roi_x_end) / 2 - self.delta_zandi_min:
+            #             res = 2
+            #             mean_angle = -45
+            #             self.get_logger().info(f"[Line] Miss,, maybe left | res= {res}, miss count= {self.miss_count}") # 못 찾았고 이전 평균 라인 x좌표가 왼쪽
+            #         else:
+            #             res = 5
+            #             self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 그것도 아닌데 못 찾았으면 일단 뒤로가기
+            #     else:
+            #         res = 5
+            #         self.get_logger().info(f"[Line] Miss | res= {res}, miss count= {self.miss_count}") # 한 번 못 찾았으면 일단 뒤로가기
+            
+            if res == 98: # 여긴 임시용 (직선 수평이면 다시 보기)
+                res = 99
 
             process_time = (time.time() - self.line_start_time) / self.collecting_frames if self.line_start_time is not None else 0.0
 
@@ -440,7 +509,7 @@ class LineListenerNode(Node): ##################################################
             self.collecting = False
             self.frames_left = 0
             self.candidates = []
-            self.last_line_xy = None     # ★ 그래프 클리어
+            self.last_line_xy = None     # 시각화
             self.frame_idx = 0
 
             self.out_text = ""
@@ -495,12 +564,10 @@ class LineListenerNode(Node): ##################################################
             avg_fps = self.frame_count / (time.time() - self.last_report_time)
             self.last_avg_text = f"PING: {avg_time*1000:.2f}ms | FPS: {avg_fps:.2f}"
             self.frame_count = 0; self.total_time = 0.0; self.last_report_time = time.time()
-        cv2.putText(cv_image, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-
-        cv2.imshow("Line", cv_image)
-        cv2.waitKey(1)
-
         
+        cv2.putText(cv_image, self.last_avg_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+        cv2.imshow("Line", cv_image)
+        cv2.waitKey(1)       
 
 def main():
     rp.init()
