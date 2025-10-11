@@ -141,7 +141,7 @@ private:
         cv::Mat bgr = cv_ptr->image;
         
         int h = bgr.rows, w = bgr.cols;
-        int x1 = 0 * w / 5, x2 = w * 5 / 5, y1 = 1 * h / 12, y2 = 11 * h / 12; // ROI (파이썬과 동일)
+        int x1 = 0 * w / 5, x2 = w * 5 / 5, y1 = 0 * h / 12, y2 = 12 * h / 12; // ROI (파이썬과 동일)
         
         if (armed_ && !collecting_){
             collecting_ = true;
