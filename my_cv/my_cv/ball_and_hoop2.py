@@ -27,6 +27,9 @@ class LineListenerNode(Node): ##################################################
         self.roi_y_start = int(camera_height * 6 // 12)
         self.roi_y_end = int(camera_height * 12 // 12)
 
+        self.roi_h = self.roi_y_end - self.roi_y_start
+        self.roi_w = self.roi_x_end - self.roi_x_start
+
         self.zandi_x = 320
         self.zandi_y = 240
 
@@ -159,7 +162,9 @@ class LineListenerNode(Node): ##################################################
         self.declare_parameter('backboard_area', 200)
 
         self.declare_parameter('depth_max_hoop', 1500)
-        self.declare_parameter('merge_offset_px', 13)
+
+        self.declare_parameter('prox_px', 40)
+        self.declare_parameter('expand_px', 13)
         self.declare_parameter('shrink_px', 13)
 
         # 파라미터 적용 B
@@ -192,7 +197,9 @@ class LineListenerNode(Node): ##################################################
         self.backboard_area = self.get_parameter('backboard_area').value
 
         self.depth_max_hoop = self.get_parameter('depth_max_hoop').value 
-        self.merge_offset_px = self.get_parameter('merge_offset_px').value
+
+        self.prox_px = self.get_parameter('prox_px').value
+        self.expand_px = self.get_parameter('expand_px').value
         self.shrink_px = self.get_parameter('shrink_px').value
 
         self.add_on_set_parameters_callback(self.param_callback)
@@ -252,7 +259,8 @@ class LineListenerNode(Node): ##################################################
             elif p.name == "white_inner_ratio_min": self.white_inner_ratio_min = float(p.value)
             elif p.name == "backboard_area":  self.backboard_area = int(p.value)
             elif p.name == "depth_max_hoop":  self.depth_max_hoop = int(p.value)
-            elif p.name == "merge_offset_px":  self.merge_offset_px = int(p.value)
+            elif p.name == "prox_px":  self.prox_px = int(p.value)
+            elif p.name == "expand_px":  self.expand_px = int(p.value)
             elif p.name == "shrink_px":  self.shrink_px = int(p.value)
 
         # HSV 경계값 배열 갱신
@@ -595,30 +603,27 @@ class LineListenerNode(Node): ##################################################
                 best_cx_hoop = best_cy_hoop = best_depth_hoop = best_yaw = None
                 best_band_mask = best_left_mask = best_right_mask = best_left_src = best_right_src = None
 
+                dbg_dil_union = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)  
+
                 for cnt in contours:
                     area = cv2.contourArea(cnt)
                     if area > self.backboard_area: # 1. 일정 넓이 이상
-                        # --- 주변 컨투어까지 함께 묶기 (중요!) ---
-                        roi_h = self.roi_y_end - self.roi_y_start
-                        roi_w = self.roi_x_end - self.roi_x_start
-                        dbg_dil_union = np.zeros((roi_h, roi_w), dtype=np.uint8)  
-
                         # 현재 cnt의 bbox 확장(이 범위에 겹치는 컨투어는 같은 후보로 간주)
-                        prox = getattr(self, 'prox_px', 120)  # 가까이 있으면 묶기 (튜닝값)
                         x, y, w0, h0 = cv2.boundingRect(cnt)
-                        x0 = max(0, x - prox)
-                        y0 = max(0, y - prox)
-                        x1 = min(roi_w-1, x + w0 + prox)
-                        y1 = min(roi_h-1, y + h0 + prox)
+                        x0 = max(0, x - self.prox_px)
+                        y0 = max(0, y - self.prox_px)
+                        x1 = min(self.roi_w-1, x + w0 + self.prox_px)
+                        y1 = min(self.roi_h-1, y + h0 + self.prox_px)
                         expanded_rect = (x0, y0, x1-x0, y1-y0)
 
                         def _overlap(r1, r2):
-                            ax, ay, aw, ah = r1; bx, by, bw, bh = r2
+                            ax, ay, aw, ah = r1
+                            bx, by, bw, bh = r2
                             return not (ax+aw < bx or bx+bw < ax or ay+ah < by or by+bh < ay)
 
                         min_piece_area = getattr(self, 'min_piece_area', int(0.15 * self.backboard_area))
 
-                        cand_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                        cand_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
 
                         # 현재 cnt + 주변의 유의미한 조각들을 함께 그림
                         for c2 in contours:
@@ -628,8 +633,8 @@ class LineListenerNode(Node): ##################################################
                             if _overlap(expanded_rect, (xx, yy, ww, hh)):
                                 cv2.drawContours(cand_mask, [c2], -1, 255, thickness=cv2.FILLED)
 
-                        # === 여기서부터는 네 기존 로직 그대로 계속 ===
-                        k_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*self.merge_offset_px+1, 2*self.merge_offset_px+1))
+                        # 
+                        k_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*self.expand_px+1, 2*self.expand_px+1))
                         cand_dil = cv2.dilate(cand_mask, k_merge, iterations=1)
 
                         cnts_dil, _ = cv2.findContours(cand_dil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -693,11 +698,11 @@ class LineListenerNode(Node): ##################################################
                         right_src2 = to_src2(right_dst2)
                         inner_src2 = to_src2(inner_dst2)
 
-                        top_mask   = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                        left_mask  = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                        right_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                        inner_mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
-                        band_mask  = np.zeros((roi_h, roi_w), dtype=np.uint8)
+                        top_mask   = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
+                        left_mask  = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
+                        right_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
+                        inner_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
+                        band_mask  = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
 
                         cv2.fillPoly(top_mask,   [top_src2],                     255, lineType=cv2.LINE_8)
                         cv2.fillPoly(left_mask,  [left_src2],                    255, lineType=cv2.LINE_8)
@@ -753,8 +758,6 @@ class LineListenerNode(Node): ##################################################
                                 best_right_mask = right_mask
                                 best_left_src  = left_src2
                                 best_right_src = right_src2
-
-                cv2.imshow('DBG/dilated_contour_mask', dbg_dil_union)
 
                 # 백보드 검출은 끝났고 각도 계산 및 정보 갱신
                 if best_cnt_hoop is not None: # 골대 탐지를 했다면
@@ -1028,6 +1031,7 @@ class LineListenerNode(Node): ##################################################
             elif self.cam1_mode == HOOP:
                 cv2.imshow('Red Mask', red_mask)
                 cv2.imshow('White Mask', white_mask)
+                cv2.imshow('DBG/dilated_contour_mask', dbg_dil_union)
                 if best_band_mask is not None:
                     cv2.imshow('Band Mask', self.last_band_mask)
 
