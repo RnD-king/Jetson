@@ -570,7 +570,7 @@ if __name__ == '__main__':
                 #                 res = 3
                 #             elif avg_angle <= -8:
                 #                 res = 2
-                #             else:
+                #             else: #
                 #                 res = 12
                 #             self.get_logger().info(f"[Hurdle] Approaching 2 | angle= {avg_angle}, dis= {avg_dy}")
 
