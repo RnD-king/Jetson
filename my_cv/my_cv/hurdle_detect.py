@@ -28,9 +28,9 @@ class HurdleDetectorNode(Node):
     def __init__(self):
         super().__init__('hurdle_detector')
 
-        self.roi_x_start = int(camera_width * 0 // 5)
-        self.roi_x_end = int(camera_width * 5 // 5)
-        self.roi_y_start = int(camera_height * 1 // 12)
+        self.roi_x_start = int(camera_width * 1 // 5)
+        self.roi_x_end = int(camera_width * 4 // 5)
+        self.roi_y_start = int(camera_height * 0 // 12)
         self.roi_y_end = int(camera_height * 12 // 12)
 
         # 타이머 
@@ -98,10 +98,10 @@ class HurdleDetectorNode(Node):
         self.declare_parameter("b_low", 140)  # 파랑
         self.declare_parameter("b_high", 255)  # 노랑
 
-        self.declare_parameter("limit_one_step", 255)  #
-        self.declare_parameter("one_step", 255)  #
-        self.declare_parameter("two_step", 255)  #
-        self.declare_parameter("limit_jump", 255)  #
+        self.declare_parameter("limit_one_step", 250)  #
+        self.declare_parameter("one_step", 100)  #
+        self.declare_parameter("two_step", 200)  #
+        self.declare_parameter("limit_jump", 150)  #
 
         # 파라미터 적용
         self.hurdle_near_by = self.get_parameter("hurdle_near_by").value
@@ -136,9 +136,9 @@ class HurdleDetectorNode(Node):
             self.roi_y_start = camera_height * 4 // 12
             self.roi_y_end   = camera_height * 12 // 12
         else:
-            self.roi_x_start = camera_width * 0 // 5
-            self.roi_x_end   = camera_width * 5 // 5
-            self.roi_y_start = camera_height * 1 // 12
+            self.roi_x_start = camera_width * 1 // 5
+            self.roi_x_end   = camera_width * 4 // 5
+            self.roi_y_start = camera_height * 0 // 12
             self.roi_y_end   = camera_height * 12 // 12  
 
     def parameter_callback(self, params):
@@ -152,9 +152,13 @@ class HurdleDetectorNode(Node):
             elif p.name == "a_high": self.a_high = int(p.value)
             elif p.name == "b_low": self.b_low = int(p.value)
             elif p.name == "b_high": self.b_high = int(p.value)
+            elif p.name == "limit_one_step": self.limit_one_step = int(p.value)
+            elif p.name == "one_step": self.one_step = int(p.value)
+            elif p.name == "two_step": self.two_step = int(p.value)
+            elif p.name == "limit_jump": self.limit_jump = int(p.value)
             
-        self.lower_lab = np.array([self.l_low, self.a_low, self.b_low ], dtype=np.uint8) # 색공간 변하면 적용
-        self.upper_lab = np.array([self.l_high, self.a_high, self.b_high], dtype=np.uint8)
+            self.lower_lab = np.array([self.l_low, self.a_low, self.b_low ], dtype=np.uint8) # 색공간 변하면 적용
+            self.upper_lab = np.array([self.l_high, self.a_high, self.b_high], dtype=np.uint8)
             
         return SetParametersResult(successful=True)
     
@@ -314,7 +318,7 @@ class HurdleDetectorNode(Node):
                                 best_cnt = cnt
                                 best_cx_hurdle = x0 + self.roi_x_start
                                 best_cy_hurdle = y0 + self.roi_y_start
-                                best_w_hurdle = int(rw) # 필없
+                                best_w_hurdle = int(rw) 
                                 best_h_hurdle = float(rh) 
                                 best_angle = float(ang)
                                 best_vx, best_vy = vx, vy
@@ -452,7 +456,7 @@ class HurdleDetectorNode(Node):
                 # 퍼블리시
                 msg_out = HurdleResult()
                 msg_out.res = res
-                msg_out.angle = abs(avg_angle)
+                msg_out.angle = abs(int(round(avg_angle)))
                 self.hurdle_result_pub.publish(msg_out)
 
                 self.get_logger().info(f"res= {res}")
@@ -465,7 +469,7 @@ class HurdleDetectorNode(Node):
             
         cv2.rectangle(frame, (self.roi_x_start + 1, self.roi_y_start + 1), (self.roi_x_end - 1, self.roi_y_end - 1), self.rect_color, 1)
         cv2.circle(frame, (zandi_x, zandi_y), 5, (255, 0, 255), -1)
-        cv2.line(frame, (zandi_x - zandi_half_width, zandi_y), (zandi_x + zandi_half_width, zandi_y), (255, 0, 255), 2)
+        cv2.line(frame, (self.roi_x_start, zandi_y), (self.roi_x_end, zandi_y), (255, 0, 255), 2)
         
         cv2.rectangle(frame, (self.roi_x_start + 1, self.limit_one_step), (self.roi_x_end - 1, self.limit_jump), (123, 124, 55), 2)
 
