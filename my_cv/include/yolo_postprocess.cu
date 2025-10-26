@@ -1,4 +1,6 @@
-#include "postprocess.cuh"
+#ifndef POSTPROCESS_CUH
+#define POSTPROCESS_CUH
+
 #include <cuda_runtime.h>
 #include <algorithm>
 #include <cmath>
@@ -240,3 +242,4 @@ bool RunYoloRawNMS(
     return true;
 }
 
+#endif // POSTPROCESS_CUH
