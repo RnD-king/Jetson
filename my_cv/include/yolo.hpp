@@ -12,6 +12,7 @@
 
 namespace my_cv {
 
+// Detection 구조체: 박스, confidence, class_id
 struct Detection {
     cv::Rect box;
     float    confidence;
@@ -23,11 +24,11 @@ public:
     explicit YoloTRT(const std::string& engine_path);
     ~YoloTRT();
 
-    // img_w,img_h: 원본 이미지 크기(레터박스 역보정용)
+    // 이미지 크기(img_w, img_h): 레터박스 역보정용
     bool Infer(const cv::Mat& input, std::vector<Detection>& detections, int img_w, int img_h);
 
 private:
-    // --- TensorRT core ---
+    // --- TensorRT 핵심 ---
     std::shared_ptr<nvinfer1::IRuntime>        runtime_;
     std::shared_ptr<nvinfer1::ICudaEngine>     engine_;
     std::shared_ptr<nvinfer1::IExecutionContext> context_;
@@ -36,11 +37,11 @@ private:
     cudaStream_t stream_{};
     cudaEvent_t  ready_{};
 
-    // --- preproc scratch (GPU BGR upload) ---
+    // --- preproc 스크래치 (GPU BGR 업로드) ---
     uint8_t* gpu_bgr_ = nullptr;
     size_t   gpu_bgr_size_ = 0;
 
-    // --- input meta ---
+    // --- input 메타 ---
     int   input_w_ = 0;
     int   input_h_ = 0;
     size_t input_size_ = 0; // 3*H*W
@@ -58,17 +59,17 @@ private:
     float*   h_scores_ = nullptr;
     float*   h_raw_    = nullptr;
 
-    // --- engine tensor names ---
+    // --- engine tensor 이름 ---
     std::string in_name_;
     std::string num_name_;
     std::string boxes_name_;
     std::string scores_name_;
     std::string raw_name_;
 
-    // --- output mode ---
+    // --- 출력 모드 ---
     // 1 = E2E(EfficientNMS_TRT: num/boxes/scores), 2 = RAW(단일 출력)
     int mode_out_ = 0;
-    int max_det_  = 0;   // E2E: boxes second dim
+    int max_det_  = 0;   // E2E: boxes 두 번째 차원
     int num_preds_ = 0;  // RAW: 마지막 축(예: 8400)
 
     // --- legacy placeholders (옛 v5/WTS 코드와의 호환을 위해 남김; 실제로는 미사용) ---
