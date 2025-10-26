@@ -255,3 +255,39 @@ namespace my_cv {
         }
     }
 }
+
+
+// # 메모리 터지면 CTL에서
+// sudo systemctl stop gdm
+// # 커서만 보이면 ctrl + alt + F2 (F1 or F3)
+// # 로그인 ID: rnd / PW: rnd 
+
+
+// # .pt > .onnx 변환 (가상환경에서 .pt 있는 위치로)
+// yolo export \
+// model=best_8s.pt \
+// format=onnx \
+// simplify=True \
+// dynamic=False \
+// imgsz=640 \
+// half=True \
+// opset=12 \
+// nms=True \
+// device=0
+
+// dynamic - 동적입력 / imgsz - 해상도 / half - FP32 > FP16 / nms - 자동 NMS
+
+
+// # .onnx > .engine 빌드 (가상환경에서 같은 위치로)
+// /usr/src/tensorrt/bin/trtexec \
+// --onnx=best_8s.onnx \
+// --saveEngine=best_8s_16.engine \
+// --fp16 \
+// --memPoolSize=workspace:4096 \
+// --noTF32 \
+// --verbose
+
+// memPoolSize - 용량
+
+// # CTL 나오기
+// sudo systemctl start gdm
