@@ -1,4 +1,4 @@
-#ifndef MY_CV_CUDA_PREPROCESS_CUH_
+#define MY_CV_CUDA_PREPROCESS_CUH_
 #define MY_CV_CUDA_PREPROCESS_CUH_
 #include <cuda_runtime.h>
 
