@@ -489,7 +489,7 @@ class LineListenerNode(Node): ##################################################
                         cxs = [a for s, a in zip(self.ball_valid_list, self.ball_cx_list) if s == result and a is not None]
                         cys = [a for s, a in zip(self.ball_valid_list, self.ball_cy_list) if s == result and a is not None]
                         dists = [a for s, a in zip(self.ball_valid_list, self.ball_dis_list) if s == result and a is not None]
-                        avg_cx = int(round(np.mean(cxs))) + 40
+                        avg_cx = int(round(np.mean(cxs))) 
                         avg_cy = int(round(np.mean(cys)))
                         avg_dis = np.mean(dists) * self.depth_scale
 
@@ -497,7 +497,7 @@ class LineListenerNode(Node): ##################################################
                         angle = int(round(math.degrees(math.atan((avg_cx - self.cx_intr) / self.fx))))
                         self.last_avg_cy_ball = avg_cy # 다음 프레임에 판단용
                         
-                        if avg_cy <= 320:
+                        if avg_cy <= 300:
                             if angle >= 9.6: # 우회전
                                 res = 30 
                             elif angle <= -9.6: # 좌회전
@@ -518,7 +518,7 @@ class LineListenerNode(Node): ##################################################
                         self.cam1_ball_count += 1
 
                     else: # 공 못 찾았는데
-                        if self.last_avg_cy_ball >= 320 and self.cam1_ball_count >= 1: # 그 전까지 공을 보고 있었고 공이 대충 밑에 있었다면
+                        if self.last_avg_cy_ball >= 300 and self.cam1_ball_count >= 1: # 그 전까지 공을 보고 있었고 공이 대충 밑에 있었다면
                             if self.last_avg_cy_ball >= 420:
                                 res = 12
                             else:
@@ -537,7 +537,7 @@ class LineListenerNode(Node): ##################################################
 
                             self.apply_mode_layout()
 
-                        elif self.cam1_ball_count == 1:  # 한 번 찾았었는데 놓쳤다면
+                        elif self.cam1_ball_count >= 1:  # 한 번 찾았었는데 놓쳤다면
                             self.get_logger().info(f"[Ball] finding one more")
                             res = 12# 앞 가서 다시 봐봐
                             angle = 0
@@ -1270,7 +1270,10 @@ class LineListenerNode(Node): ##################################################
                 self.get_logger().info(f"[Ball] 111111111111")
             else: 
                 self.get_logger().info(f"[Ball] 222222222222")
-                if abs(dx) <= 27 and abs(dy) > 18:
+                if abs(dy) >= 400:
+                    res = 27
+
+                elif abs(dx) <= 27 and abs(dy) > 18: # 여기 크기는 보정값 맞춰서
                     if abs(dy) >= 60:
                         if dy > 0:
                             res = 5 #back_one
