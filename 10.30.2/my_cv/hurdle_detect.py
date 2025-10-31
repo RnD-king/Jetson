@@ -93,7 +93,7 @@ class HurdleDetectorNode(Node):
         self.declare_parameter("l_high", 255)  # 밝고
         self.declare_parameter("a_low", 100)  # 초록
         self.declare_parameter("a_high", 142)  # 핑크
-        self.declare_parameter("b_low", 142)  # 파랑
+        self.declare_parameter("b_low", 130)  # 파랑
         self.declare_parameter("b_high", 255)  # 노랑
 
         self.declare_parameter("limit_two_step", 130)  #
