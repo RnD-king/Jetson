@@ -107,7 +107,7 @@ class LineListenerNode(Node): ##################################################
         self.yaw_list = []
 
         self.hoop_r = 100 # 골대 반지름
-        self.throwing_range_z = 470 # 공 던지는 거리
+        self.throwing_range_z = 450 # 공 던지는 거리
         self.goal_range = 50 # 공 던질 때 떨어지는 곳 오차범위
 
         self.bridge = CvBridge()   
@@ -138,17 +138,24 @@ class LineListenerNode(Node): ##################################################
 
         self.declare_parameter("orange_h_low_1", 8) # 주황 8, 20 < 동방 기준임
         self.declare_parameter("orange_h_high_1", 15)  
-        self.declare_parameter("orange_s_low_1", 150) # 채도  40, 255
+        self.declare_parameter("orange_s_low_1", 160) # 채도  40, 255
         self.declare_parameter("orange_s_high_1", 255)  
-        self.declare_parameter("orange_v_low_1", 170) # 밝기 50, 255
+        self.declare_parameter("orange_v_low_1", 162) # 밝기 50, 255
         self.declare_parameter("orange_v_high_1", 255)
 
         self.declare_parameter("orange_h_low_2", 6) # 주황 8, 20 < 동방 기준임
         self.declare_parameter("orange_h_high_2", 30)  
-        self.declare_parameter("orange_s_low_2", 50) # 채도  40, 255
+        self.declare_parameter("orange_s_low_2", 13) # 채도  40, 255
         self.declare_parameter("orange_s_high_2", 255)  
         self.declare_parameter("orange_v_low_2", 50) # 밝기 50, 255
         self.declare_parameter("orange_v_high_2", 255)
+
+        self.declare_parameter("orange_h_low_3", 2) # 주황 8, 20 < 동방 기준임
+        self.declare_parameter("orange_h_high_3", 30)  
+        self.declare_parameter("orange_s_low_3", 45) # 채도  40, 255
+        self.declare_parameter("orange_s_high_3", 255)  
+        self.declare_parameter("orange_v_low_3", 30) # 밝기 50, 255
+        self.declare_parameter("orange_v_high_3", 255)
 
         # 파라미터 선언 H
         self.declare_parameter('red_h1_low', 0) # 빨강 구간1
@@ -192,6 +199,13 @@ class LineListenerNode(Node): ##################################################
         self.orange_v_low_2 = self.get_parameter("orange_v_low_2").value
         self.orange_v_high_2 = self.get_parameter("orange_v_high_2").value
 
+        self.orange_h_low_3 = self.get_parameter("orange_h_low_3").value
+        self.orange_h_high_3 = self.get_parameter("orange_h_high_3").value
+        self.orange_s_low_3 = self.get_parameter("orange_s_low_3").value
+        self.orange_s_high_3 = self.get_parameter("orange_s_high_3").value
+        self.orange_v_low_3 = self.get_parameter("orange_v_low_3").value
+        self.orange_v_high_3 = self.get_parameter("orange_v_high_3").value
+
         # 파라미터 적용 H
         self.red_h1_low = self.get_parameter('red_h1_low').value
         self.red_h1_high = self.get_parameter('red_h1_high').value
@@ -222,6 +236,8 @@ class LineListenerNode(Node): ##################################################
         self.upper_hsv_ball = np.array([self.orange_h_high_1, self.orange_s_high_1, self.orange_v_high_1], dtype=np.uint8)
         self.lower_hsv_ball2 = np.array([self.orange_h_low_2, self.orange_s_low_2, self.orange_v_low_2], dtype=np.uint8)  # 두 번째 필터용
         self.upper_hsv_ball2 = np.array([self.orange_h_high_2, self.orange_s_high_2, self.orange_v_high_2], dtype=np.uint8)  # 두 번째 필터용
+        self.lower_hsv_ball3 = np.array([self.orange_h_low_3, self.orange_s_low_3, self.orange_v_low_3], dtype=np.uint8)  # 두 번째 필터용
+        self.upper_hsv_ball3 = np.array([self.orange_h_high_3, self.orange_s_high_3, self.orange_v_high_3], dtype=np.uint8)  # 두 번째 필터용
         self.hsv = None 
 
         self.apply_mode_layout()
@@ -267,6 +283,12 @@ class LineListenerNode(Node): ##################################################
             elif p.name == "orange_s_high_2": self.orange_s_high_2 = int(p.value)
             elif p.name == "orange_v_low_2":  self.orange_v_low_2 = int(p.value)
             elif p.name == "orange_v_high_2": self.orange_v_high_2 = int(p.value)
+            elif p.name == "orange_h_low_3":   self.orange_h_low_3 = int(p.value)
+            elif p.name == "orange_h_high_3": self.orange_h_high_3 = int(p.value)
+            elif p.name == "orange_s_low_3":  self.orange_s_low_3 = int(p.value)
+            elif p.name == "orange_s_high_3": self.orange_s_high_3 = int(p.value)
+            elif p.name == "orange_v_low_3":  self.orange_v_low_3 = int(p.value)
+            elif p.name == "orange_v_high_3": self.orange_v_high_3 = int(p.value)
             elif p.name == "red_h1_low":    self.red_h1_low = int(p.value)
             elif p.name == "red_h1_high":   self.red_h1_high = int(p.value)
             elif p.name == "red_h2_low":    self.red_h2_low = int(p.value)
@@ -290,6 +312,8 @@ class LineListenerNode(Node): ##################################################
         self.upper_hsv_ball = np.array([self.orange_h_high_1, self.orange_s_high_1, self.orange_v_high_1], dtype=np.uint8)
         self.lower_hsv_ball2 = np.array([self.orange_h_low_2, self.orange_s_low_2, self.orange_v_low_2], dtype=np.uint8)  # 두 번째 필터용
         self.upper_hsv_ball2 = np.array([self.orange_h_high_2, self.orange_s_high_2, self.orange_v_high_2], dtype=np.uint8)  # 두 번째 필터용
+        self.lower_hsv_ball3 = np.array([self.orange_h_low_3, self.orange_s_low_3, self.orange_v_low_3], dtype=np.uint8)  # 두 번째 필터용
+        self.upper_hsv_ball3 = np.array([self.orange_h_high_3, self.orange_s_high_3, self.orange_v_high_3], dtype=np.uint8)  # 두 번째 필터용
 
         # 모드/서브모드가 바뀌었으면 ROI 등 즉시 적용
         if (old_cam_mode != self.cam_mode) or (old_cam1_mode != self.cam1_mode):
@@ -378,7 +402,6 @@ class LineListenerNode(Node): ##################################################
                 contours_large = [cnt for cnt in contours if cv2.contourArea(cnt) >= 200]
 
                 if len(contours_large) != 0:
-                    print("11")
 
                     expanded_mask = np.zeros_like(mask)
                     cv2.drawContours(expanded_mask, contours_large, -1, 255, -1)  # 큰 컨투어 전부 채우기
@@ -402,7 +425,6 @@ class LineListenerNode(Node): ##################################################
                         area = cv2.contourArea(cnt)
                         print(f"area: {area}")
                         if area > 300:
-                            print("22")
                             (x, y), circle_r = cv2.minEnclosingCircle(cnt)
                             circle_area = circle_r * circle_r * math.pi
                             ratio = area / circle_area
@@ -747,204 +769,6 @@ class LineListenerNode(Node): ##################################################
                                 best_left_mask, best_right_mask = left_mask, right_mask
                                 best_left_src, best_right_src = left_src, right_src
 
-                # self.frame_idx += 1
-                # self.get_logger().info(f"step {self.frame_idx}")
-                
-                # self.hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
-
-                # depth_mask = np.zeros_like(roi_depth, dtype=np.uint8)
-                # depth_mask[(roi_depth > self.depth_min) & (roi_depth < self.depth_max_hoop)] = 255
-
-                # # 모폴로지 close 적용
-                # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-                # depth_mask_closed = cv2.morphologyEx(depth_mask, cv2.MORPH_CLOSE, kernel)
-
-                # # 빨강 마스킹
-                # red_mask1 = cv2.inRange(self.hsv, (self.red_h1_low, self.red_s_low, self.red_v_low), (self.red_h1_high, 255, 255))
-                # red_mask2 = cv2.inRange(self.hsv, (self.red_h2_low, self.red_s_low, self.red_v_low), (self.red_h2_high, 255, 255))
-                # red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-                # red_mask[depth_mask_closed == 0] = 0  
-
-                # white_mask = cv2.inRange(self.hsv, (0, 0, self.white_v_low), (180, self.white_s_high, 255))
-
-                # # 모폴로지
-                # red_mask_raw = red_mask.copy()
-
-                # cnts0, _ = cv2.findContours(red_mask_raw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                # red_mask_filtered0 = np.zeros_like(red_mask_raw, dtype=np.uint8)
-                # for c in cnts0:
-                #     if cv2.contourArea(c) >= 300:
-                #         cv2.drawContours(red_mask_filtered0, [c], -1, 255, thickness=cv2.FILLED)
-
-                # # 이제 모폴로지를 red_mask_filtered0에 적용
-                # red_mask = cv2.morphologyEx(red_mask_filtered0, cv2.MORPH_OPEN,  kernel)
-                # red_mask = cv2.morphologyEx(red_mask,         cv2.MORPH_CLOSE, kernel)
-
-                # # (옵션) white도 동일하게 하고 싶으면 그대로 반복
-                # white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN,  kernel)
-                # white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-
-                # # 컨투어
-                # contours, _ = cv2.findContours(red_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) 
-                
-                # best_box = best_cnt_hoop = None
-                # best_score = best_top_score = best_left_score = best_right_score = 0.5
-                # best_cx_hoop = best_cy_hoop = best_depth_hoop = best_yaw = None
-                # best_band_mask = best_left_mask = best_right_mask = best_left_src = best_right_src = None
-
-                # dbg_dil_union = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)  
-
-                # for cnt in contours:
-                #     area = cv2.contourArea(cnt)
-                #     if area > self.backboard_area: # 1. 일정 넓이 이상
-                #         # 현재 cnt의 bbox 확장(이 범위에 겹치는 컨투어는 같은 후보로 간주)
-                #         x, y, w0, h0 = cv2.boundingRect(cnt)
-                #         x0 = max(0, x - self.prox_px)
-                #         y0 = max(0, y - self.prox_px)
-                #         x1 = min(self.roi_w-1, x + w0 + self.prox_px)
-                #         y1 = min(self.roi_h-1, y + h0 + self.prox_px)
-                #         expanded_rect = (x0, y0, x1-x0, y1-y0)
-
-                #         def _overlap(r1, r2):
-                #             ax, ay, aw, ah = r1
-                #             bx, by, bw, bh = r2
-                #             return not (ax+aw < bx or bx+bw < ax or ay+ah < by or by+bh < ay)
-
-                #         min_piece_area = getattr(self, 'min_piece_area', int(0.15 * self.backboard_area))
-
-                #         cand_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-
-                #         # 현재 cnt + 주변의 유의미한 조각들을 함께 그림
-                #         for c2 in contours:
-                #             if cv2.contourArea(c2) < min_piece_area:
-                #                 continue
-                #             xx, yy, ww, hh = cv2.boundingRect(c2)
-                #             if _overlap(expanded_rect, (xx, yy, ww, hh)):
-                #                 cv2.drawContours(cand_mask, [c2], -1, 255, thickness=cv2.FILLED)
-
-                #         # 
-                #         k_merge = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*self.expand_px+1, 2*self.expand_px+1))
-                #         cand_dil = cv2.dilate(cand_mask, k_merge, iterations=1)
-
-                #         cnts_dil, _ = cv2.findContours(cand_dil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                #         if not cnts_dil:
-                #             continue
-                #         cnt_dil = max(cnts_dil, key=cv2.contourArea)
-
-
-                #         for c_d in cnts_dil:
-                #             cv2.drawContours(dbg_dil_union, [c_d], -1, 255, thickness=cv2.FILLED)
-
-                #         # 4) 팽창된 컨투어의 최소외접사각형
-                #         rect_dil = cv2.minAreaRect(cnt_dil)        # ((cx,cy),(w,h),ang)
-                #         (cx, cy), (w, h), ang = rect_dil
-                #         if w < h:
-                #             w, h = h, w
-                #             ang += 90.0
-
-                #         # 5) 균일 침식(내측으로 shrink)  배경/가장자리 잔여 제거
-                #         if w <= 2*self.shrink_px or h <= 2*self.shrink_px:
-                #             continue
-                #         w2 = w - 2*self.shrink_px
-                #         h2 = h - 2*self.shrink_px
-                #         rect_shrunk = ((cx, cy), (w2, h2), ang)
-
-                #         # 6) shrunk-rect 폴리곤 (ROI 좌표계)
-                #         box2 = cv2.boxPoints(rect_shrunk).astype(np.float32)
-
-                #         # 꼭짓점 정렬 (tl,tr,br,bl)
-                #         s2 = box2.sum(axis=1)
-                #         diff2 = np.diff(box2, axis=1).ravel()
-                #         tl2 = box2[np.argmin(s2)]
-                #         br2 = box2[np.argmax(s2)]
-                #         tr2 = box2[np.argmin(diff2)]
-                #         bl2 = box2[np.argmax(diff2)]
-                #         src2 = np.array([tl2, tr2, br2, bl2], dtype=np.float32)
-
-                #         # 7) shrunk-rect 기준으로 밴드/내부 정의 (정규화 평면)
-                #         dst_rect2 = np.array([[0,0],[w2,0],[w2,h2],[0,h2]], dtype=np.float32)
-
-                #         # 실제 백보드 비율 유지
-                #         top2  = max(1, int(round(h2 * self.band_top_ratio)))
-                #         side2 = max(1, int(round(w2 * self.band_side_ratio)))
-
-                #         top_dst2   = np.array([[0,0],[w2,0],[w2,top2],[0,top2]], dtype=np.float32)
-                #         left_dst2  = np.array([[0.2*side2,0],[side2,0],[side2,h2],[0.2*side2,h2]], dtype=np.float32)
-                #         right_dst2 = np.array([[w2-side2,0],[w2-0.2*side2,0],[w2-0.2*side2,h2],[w2-side2,h2]], dtype=np.float32)
-                #         inner_dst2 = np.array([[side2,top2],[w2-side2,top2],[w2-side2,h2],[side2,h2]], dtype=np.float32)
-
-                #         # 8) 변환행렬 (shrunk-rect ↔ 정규화 평면)
-                #         M2_inv = cv2.getPerspectiveTransform(dst_rect2.astype(np.float32), src2.astype(np.float32))
-
-                #         # 9) 최종 마스크(ROI 좌표계) 생성
-                #         def to_src2(dst_poly):
-                #             return np.round(
-                #                 cv2.perspectiveTransform(dst_poly.reshape(-1,1,2), M2_inv).reshape(-1,2)
-                #             ).astype(np.int32)
-
-                #         top_src2   = to_src2(top_dst2)
-                #         left_src2  = to_src2(left_dst2)
-                #         right_src2 = to_src2(right_dst2)
-                #         inner_src2 = to_src2(inner_dst2)
-
-                #         top_mask   = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-                #         left_mask  = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-                #         right_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-                #         inner_mask = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-                #         band_mask  = np.zeros((self.roi_h, self.roi_w), dtype=np.uint8)
-
-                #         cv2.fillPoly(top_mask,   [top_src2], 255, lineType=cv2.LINE_8)
-                #         cv2.fillPoly(left_mask,  [left_src2], 255, lineType=cv2.LINE_8)
-                #         cv2.fillPoly(right_mask, [right_src2], 255, lineType=cv2.LINE_8)
-                #         cv2.fillPoly(inner_mask, [inner_src2], 255, lineType=cv2.LINE_8)
-                #         cv2.fillPoly(band_mask,  [top_src2, left_src2, right_src2], 255, lineType=cv2.LINE_8)
-
-                #         area_top   = cv2.countNonZero(top_mask)
-                #         area_left  = cv2.countNonZero(left_mask)
-                #         area_right = cv2.countNonZero(right_mask)
-                #         if area_top < 5 or area_left < 5 or area_right < 5:
-                #             continue
-
-                #         ratio_top   = cv2.countNonZero(cv2.bitwise_and(red_mask, top_mask))     / float(area_top)
-                #         ratio_left  = cv2.countNonZero(cv2.bitwise_and(red_mask, left_mask))    / float(area_left)
-                #         ratio_right = cv2.countNonZero(cv2.bitwise_and(red_mask, right_mask))   / float(area_right)
-                #         ratio_band  = (ratio_top + ratio_left + ratio_right) / 3.0
-
-                #         if ratio_top >= self.red_ratio_min and ratio_left >= self.red_ratio_min and ratio_right >= self.red_ratio_min:
-                #             area_inner  = cv2.countNonZero(inner_mask)
-                #             white_hits  = cv2.countNonZero(cv2.bitwise_and(white_mask, inner_mask))
-                #             ratio_inner = white_hits / float(area_inner) if area_inner > 0 else 0.0
-                #             if ratio_inner <= self.white_inner_ratio_min:
-                #                 continue
-
-                #             inner_depth = roi_depth[inner_mask.astype(bool)]
-                #             hoop_valid  = np.isfinite(inner_depth) & (inner_depth > self.depth_min) & (inner_depth < self.depth_max_hoop)
-                #             if np.count_nonzero(hoop_valid) <= 10:
-                #                 continue
-                #             depth_mean = float(np.mean(inner_depth[hoop_valid]))
-                #             if depth_mean < self.depth_min or depth_mean > self.depth_max_hoop:
-                #                 continue
-
-                #             if best_score < ratio_band:
-                #                 best_score = ratio_band
-                #                 best_top_score, best_left_score, best_right_score = ratio_top, ratio_left, ratio_right
-                #                 best_cnt_hoop = cnt
-                #                 best_cx_hoop  = int(round(cx + self.roi_x_start))
-                #                 best_cy_hoop  = int(round(cy + self.roi_y_start))
-                #                 best_depth_hoop = depth_mean
-
-                #                 draw_box = cv2.boxPoints(rect_shrunk).astype(np.float32)
-                #                 best_box = (draw_box + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
-
-                #                 draw_rect_dil = cv2.boxPoints(rect_dil).astype(np.float32)
-                #                 best_box_dil = (draw_rect_dil + np.array([self.roi_x_start, self.roi_y_start], dtype=np.float32)).astype(np.int32)
-
-                #                 best_band_mask = band_mask
-                #                 best_left_mask = left_mask
-                #                 best_right_mask = right_mask
-                #                 best_left_src  = left_src2
-                #                 best_right_src = right_src2
-
                 # 백보드 검출은 끝났고 각도 계산 및 정보 갱신
                 if best_cnt_hoop is not None: # 골대 탐지를 했다면
                     self.hoop_lost = 0
@@ -1267,9 +1091,7 @@ class LineListenerNode(Node): ##################################################
 
             if dy > 40: # 일단 y로 너무 붙으면 뒤로 가기
                 res = 5
-                self.get_logger().info(f"[Ball] 111111111111")
             else: 
-                self.get_logger().info(f"[Ball] 222222222222")
                 if abs(dy) >= 400:
                     res = 27
 
@@ -1357,7 +1179,7 @@ class LineListenerNode(Node): ##################################################
                 self.draw_color = (0, 255, 0)
                 self.rect_color = (0, 255, 0)
 
-                self.get_logger().info(f'[Star121212121212t] Window {self.window_id} | I got {self.collecting_frames} frames in CAM{self.cam_mode}')
+                self.get_logger().info(f'[Start Window {self.window_id} | I got {self.collecting_frames} frames in CAM{self.cam_mode}')
         
         if self.collecting:
             
@@ -1368,7 +1190,7 @@ class LineListenerNode(Node): ##################################################
             
             # HSV 색 조절
             self.hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
-            raw_mask = cv2.inRange(self.hsv, self.lower_hsv_ball2, self.upper_hsv_ball2) # 주황색 범위 색만
+            raw_mask = cv2.inRange(self.hsv, self.lower_hsv_ball3, self.upper_hsv_ball3) # 주황색 범위 색만
             
             # 모폴로지 연산
             mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, self.kernel) # 침식 - 팽창
@@ -1466,7 +1288,7 @@ class LineListenerNode(Node): ##################################################
                     self.last_avg_cy_ball = avg_cy
 
                     if self.picked: # 줍기 모션을 했다면 >> 나 방금 주웠는데 눈 앞에 공이 또 있네?
-                        if self.pick_attempt >= 3: # 3번 넘게 실패
+                        if self.pick_attempt >= 5: # 3번 넘게 실패
                             res = 22
                             self.get_logger().info(f"[Ball] Failed to pick,,, I'll give up | Pos : {dx}, {-dy} | attempt= {self.pick_attempt}")
 
@@ -1487,19 +1309,6 @@ class LineListenerNode(Node): ##################################################
                             self.get_logger().info(f"[Ball] Pick one more time!")
 
                     else: # 아직 줍지 않았고, 공은 발견함 (평소 루프)
-
-                        # if math.hypot(dx, dy) <= self.pick_rad: # 오케이 조준 완료
-                        #     self.cam_mode = CAM1
-                        #     self.cam1_mode = HOOP
-
-                        #     self.get_logger().info(f"[Ball] Pick! Pos : {dx}, {-dy} | "
-                        #                     f"frames= {len(self.ball_valid_list)}, "
-                        #                     f"wall= {process_time*1000:.1f} ms")
-                        #     self.get_logger().info(f"[Hoop] Findind hoop,,,")
-                        #     res = 9 # pick 모션
-
-                        #     self.last_cx_ball = self.last_cy_ball = self.last_radius = None
-                        #     self.backboard_score_text = "Hoop Now"
                         res = self.decide_to_pick(dx, dy, process_time)
 
                 else: # 공을 못 봤다면
@@ -1527,34 +1336,7 @@ class LineListenerNode(Node): ##################################################
                         if self.ball_saw_once: # 근데 그 전에 공을 발견한 적이 있긴 함
                             # self.cam2_miss_count += 1
                             res = 99
-                            
-                            # if self.cam2_miss_count <= 3: # 한번만 다시 봐봐
-                            #     res = 99
-                                
-                            #     self.get_logger().info(f"[Ball] Retry,,, | miss= {self.cam2_miss_count}")
-                            #     self.last_position_text = "[Ball] Miss"
-                            #     # 오른쪽 움직일 때 회전하느라 공 뒤로 사라지는 거 생각하기
 
-                            # elif self.cam2_miss_count <= 5:
-                            #     self.get_logger().info(f"[Ball] Retry,,, | miss= {self.cam2_miss_count}")
-                            #     res = 5
-                            #     self.last_position_text = "[Ball] Miss"
-
-                            # else: # 한 번 봐놓고 공을 5번 연속이나 못 보면 뭐할까?  >>>  뭔가 찾는 모션
-                            #     self.get_logger().info(f"[Ball] I totally missed,,,")
-                            #     res = 99 # 라인 걸으세요
-                            #     self.last_position_text = f""
-                        
-                            #     self.cam2_miss_count = 0
-                            #     self.pick_attempt = 0
-                            #     self.picked = False
-                            #     self.ball_saw_once = False
-                            #     self.ball_never_seen = True
-
-                            #     self.cam_mode = CAM1
-                            #     self.cam1_mode = BALL # 공 찾으러 가자
-                            #     self.apply_mode_layout()
-                        
                         else: # 공을 탐지도 못 했고, 줍지도 않았고 공을 본 적도 없음 = 방금 막 HOOP모드에서 바뀜 >> 직진만 하면서 찾아보자
                             self.get_logger().info(f"[Ball] Finding,,,")
                             res = 12
