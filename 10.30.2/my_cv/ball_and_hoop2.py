@@ -388,55 +388,37 @@ class LineListenerNode(Node): ##################################################
             if self.collecting:
                 self.frame_idx += 1
                 self.get_logger().info(f"step {self.frame_idx}")
-            
+
+                # HSV 색 조절  
                 self.hsv = cv2.cvtColor(roi_color, cv2.COLOR_BGR2HSV)
-                raw_mask = cv2.inRange(self.hsv, self.lower_hsv_ball, self.upper_hsv_ball)
-                raw_mask[roi_depth >= self.depth_max_ball] = 0
-                raw_mask[roi_depth <= self.depth_min] = 0
+                raw_mask = cv2.inRange(self.hsv, self.lower_hsv_ball, self.upper_hsv_ball) # 주황색 범위 색만
+                raw_mask[roi_depth >= self.depth_max_ball] = 0  
+                raw_mask[roi_depth <= self.depth_min] = 0 
 
-                mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, self.kernel)
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel)
+                # 모폴로지 연산
+                mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, self.kernel) # 침식 - 팽창
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel) # 팽창 - 침식
 
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # 컨투어  <<< 여기부터 <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) 
 
-                contours_large = [cnt for cnt in contours if cv2.contourArea(cnt) >= 200]
+                best_cnt_ball = None
+                best_ratio_ball = 0.5
+                best_cx_ball = best_cy_ball = best_z_ball = best_radius = None
 
-                if len(contours_large) != 0:
-
-                    expanded_mask = np.zeros_like(mask)
-                    cv2.drawContours(expanded_mask, contours_large, -1, 255, -1)  # 큰 컨투어 전부 채우기
-
-                    expand_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (40, 40))  # 20픽셀 팽창
-                    expanded_mask = cv2.dilate(expanded_mask, expand_kernel)
-
-                    second_mask = cv2.inRange(self.hsv, self.lower_hsv_ball2, self.upper_hsv_ball2)
-                    second_mask = cv2.bitwise_and(second_mask, expanded_mask)  # 확장된 영역 내에서만 필터 적용
-
-                    second_mask = cv2.morphologyEx(second_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-                    second_mask = cv2.morphologyEx(second_mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
-
-                    contours_refined, _ = cv2.findContours(second_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                    best_cnt_ball = None
-                    best_ratio_ball = 0.5
-                    best_cx_ball = best_cy_ball = best_z_ball = best_radius = None
-
-                    for cnt in contours_refined:
-                        area = cv2.contourArea(cnt)
-                        print(f"area: {area}")
-                        if area > 300:
-                            (x, y), circle_r = cv2.minEnclosingCircle(cnt)
-                            circle_area = circle_r * circle_r * math.pi
-                            ratio = area / circle_area
-                            if ratio > best_ratio_ball:
-                                best_cnt_ball = cnt
-                                best_ratio_ball = ratio
-                                best_cx_ball = int(x + self.roi_x_start)
-                                best_cy_ball = int(y + self.roi_y_start)
-                                best_radius = int(circle_r)
-
-                else:
-                    best_cnt_ball = None               
+                for cnt in contours: # 가장 원형에 가까운 컨투어 찾기
+                    area = cv2.contourArea(cnt) # 1. 면적 > 1000
+                    if area > 500:
+                        (x, y), circle_r = cv2.minEnclosingCircle(cnt)
+                        circle_area = circle_r * circle_r * math.pi
+                        ratio = area / circle_area
+                        # 2. 컨투어 면적과 외접원 면적의 비율이 가장 작은 놈1
+                        if ratio > best_ratio_ball:
+                            best_cnt_ball = cnt
+                            best_ratio_ball = ratio
+                            best_cx_ball = int(x + self.roi_x_start)
+                            best_cy_ball = int(y + self.roi_y_start)
+                            best_radius = int(circle_r)
 
                 # 검출 결과
                 if best_cnt_ball is not None: # 원 탐지를 했다면
