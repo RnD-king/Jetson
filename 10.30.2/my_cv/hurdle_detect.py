@@ -96,9 +96,9 @@ class HurdleDetectorNode(Node):
         self.declare_parameter("b_low", 130)  # 파랑
         self.declare_parameter("b_high", 255)  # 노랑
 
-        self.declare_parameter("limit_two_step", 130)  #
-        self.declare_parameter("limit_one_step", 330)  #
-        self.declare_parameter("limit_half_step", 380)  #
+        self.declare_parameter("limit_two_step", 105)  #
+        self.declare_parameter("limit_one_step", 305)  #
+        self.declare_parameter("limit_half_step", 355)  #
         self.declare_parameter("two_step", 300)  #
         self.declare_parameter("one_step", 100)  #
         self.declare_parameter("half_step", 50)  #
